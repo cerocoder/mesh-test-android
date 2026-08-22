@@ -5,9 +5,11 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.Heartbeat
 import org.meshtastic.proto.ToRadio
 import kotlin.time.Duration.Companion.ZERO
 
@@ -89,5 +91,55 @@ class FakeRadioTransportTest {
         val ids = callback.frames.map { it.id }
         assertEquals(ids.sorted(), ids)
         assertEquals(ids.size, ids.toSet().size)
+    }
+
+    @Test
+    fun `на heartbeat отвечает статусом очереди`() = runTest {
+        val callback = RecordingCallback()
+        val subject = transport(callback, backgroundScope)
+
+        subject.start()
+        subject.send(ToRadio(heartbeat = Heartbeat(nonce = 7)).encode())
+        advanceUntilIdle()
+
+        assertEquals(1, callback.frames.count { it.queueStatus != null })
+    }
+
+    @Test
+    fun `на прощальный пакет отвечает постоянным отключением`() = runTest {
+        val callback = RecordingCallback()
+        val subject = transport(callback, backgroundScope)
+
+        subject.start()
+        subject.send(ToRadio(disconnect = true).encode())
+        advanceUntilIdle()
+
+        assertEquals(true, callback.disconnectedPermanently)
+    }
+
+    @Test
+    fun `мусорные байты не роняют транспорт`() = runTest {
+        val callback = RecordingCallback()
+        val subject = transport(callback, backgroundScope)
+
+        subject.start()
+        subject.send(byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
+        advanceUntilIdle()
+
+        assertTrue(callback.frames.isEmpty())
+        assertNull(callback.disconnectedPermanently)
+    }
+
+    @Test
+    fun `после close новые кадры не приходят`() = runTest {
+        val callback = RecordingCallback()
+        val subject = transport(callback, backgroundScope)
+
+        subject.start()
+        subject.close()
+        subject.send(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE).encode())
+        advanceUntilIdle()
+
+        assertTrue(callback.frames.isEmpty())
     }
 }

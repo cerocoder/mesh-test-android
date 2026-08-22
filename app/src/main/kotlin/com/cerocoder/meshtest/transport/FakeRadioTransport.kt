@@ -9,6 +9,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.QueueStatus
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
@@ -58,6 +59,16 @@ class FakeRadioTransport(
 
             message.want_config_id == MeshProtocol.NODE_INFO_NONCE ->
                 emit(scenario.nodeStageFrames(MeshProtocol.NODE_INFO_NONCE))
+
+            // Настоящая прошивка отвечает на heartbeat статусом очереди — это
+            // доказывает, что связь жива. Без ответа демо вело бы себя не как нода.
+            message.heartbeat != null ->
+                emit(listOf(FromRadio(queueStatus = QueueStatus(res = 0, free = 16, maxlen = 16))))
+
+            message.disconnect == true -> {
+                Log.i(TAG, "получено прощание, закрываем сессию")
+                callback.onDisconnect(isPermanent = true)
+            }
 
             else -> Log.d(TAG, "проигнорирован ToRadio: $message")
         }
