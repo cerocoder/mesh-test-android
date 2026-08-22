@@ -13,11 +13,12 @@
 ## Global Constraints
 
 - Пакет приложения: `com.cerocoder.meshtest`. Application ID тот же.
-- `minSdk = 26`, `compileSdk = 36`, `targetSdk = 36`.
-- Инструменты: AGP `8.13.2`, Kotlin `2.4.10`, Compose BOM `2026.08.00`, JDK `21`.
-  AGP намеренно из ветки 8.x: AGP 9 несёт встроенную поддержку Kotlin и отвергает плагин
-  `org.jetbrains.kotlin.android`, а замену для настройки компилятора и судьбу compose-плагина
-  в релиз-нотах не описывает. Проверено прогоном CI — сборка падала на применении плагина.
+- Инструменты: AGP `9.3.1`, Kotlin `2.4.10`, Compose BOM `2026.06.01`, Gradle `9.7.1`, JDK `21`.
+  Связка выведена прогонами CI и держится целиком: `org.meshtastic:protobufs` требует
+  `compileSdk 37`, тот поддерживается только AGP 9, AGP 9 несёт встроенный Kotlin и отвергает
+  плагин `org.jetbrains.kotlin.android`, а AGP 8 несовместим с Gradle 9.6+. Менять элементы
+  поодиночке нельзя.
+- `minSdk = 26`, `compileSdk = 37`, `targetSdk = 36`.
 - Протокол: `org.meshtastic:protobufs:2.7.26` (Wire-модели, пакет `org.meshtastic.proto`), явно добавить `com.squareup.wire:wire-runtime:6.4.5` в compile-классpath.
 - Тесты: `org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0`.
 - Нонсы handshake: `CONFIG_NONCE = 69420`, `NODE_INFO_NONCE = 69421`. Максимальный размер кадра — 512 байт.
@@ -116,9 +117,9 @@ include(":app")
 
 ```toml
 [versions]
-agp = "8.13.2"
+agp = "9.3.1"
 kotlin = "2.4.10"
-composeBom = "2026.08.00"
+composeBom = "2026.06.01"
 coroutines = "1.11.0"
 protobufs = "2.7.26"
 wire = "6.4.5"
@@ -147,7 +148,6 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 ```kotlin
 plugins {
     alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
 }
 ```
@@ -207,13 +207,12 @@ Expected: FAIL — `Unresolved reference: meshtastic` (зависимость е
 ```kotlin
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "com.cerocoder.meshtest"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.cerocoder.meshtest"
@@ -243,13 +242,6 @@ android {
     // Без этой строки любой вызов Log в JVM-тесте падает с "not mocked".
     testOptions {
         unitTests.isReturnDefaultValues = true
-    }
-}
-
-// Блок верхнего уровня: расширение kotlin принадлежит плагину Kotlin, а не android {}.
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
@@ -2281,7 +2273,7 @@ Expected: BUILD SUCCESSFUL, все тесты проходят (46 тестов:
 
 1. в списке видны четыре демо-устройства: «Demo: 5 нод», «Demo: 200 нод», «Demo: пустой меш», «Demo: только handshake»;
 2. тап по «Demo: 5 нод» переводит состояние `отключено` → `подключение (идёт handshake)` → `подключено`;
-3. на экране ленты первым кадром идёт `MyNodeInfo`, далее `Metadata`, `Config`, `Channel`, затем пять `NodeInfo` и два `ConfigComplete`;
+3. на экране ленты первым кадром идёт `MyNodeInfo`, далее `Metadata`, `Config` ×4, `ModuleConfig` ×2, `Channel` ×3, `ConfigComplete`, затем пять `NodeInfo` и второй `ConfigComplete` — восемнадцать кадров всего;
 4. «Demo: 200 нод» доводит соединение до `подключено`, лента содержит 200 кадров `NodeInfo`;
 5. «Отключиться» возвращает состояние в `отключено`.
 
