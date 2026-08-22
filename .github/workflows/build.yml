@@ -42,6 +42,9 @@ jobs:
       - name: 6 Сборка APK
         run: gradle :app:assembleDebug 2>&1 | tee -a /tmp/gradle.log
 
+      - name: 7 Сборка release
+        run: gradle :app:assembleRelease 2>&1 | tee -a /tmp/gradle.log
+
       - name: Опубликовать хвост ошибки в комментарий к коммиту
         if: failure()
         env:
