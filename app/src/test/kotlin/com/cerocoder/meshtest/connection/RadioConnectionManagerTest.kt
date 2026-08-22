@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -182,7 +183,7 @@ class RadioConnectionManagerTest {
         val manager = RadioConnectionManager(factory, scope())
 
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
-        advanceUntilIdle()
+        runCurrent()
         manager.disconnect()
         advanceUntilIdle()
 
@@ -262,5 +263,31 @@ class RadioConnectionManagerTest {
         advanceUntilIdle()
 
         assertTrue(manager.packetLog.value.isEmpty())
+    }
+
+    @Test
+    fun `после таймаута повторное подключение к тому же адресу создаёт транспорт заново`() = runTest {
+        var created = 0
+        val factory = object : RadioTransportFactory {
+            override fun create(address: String, callback: RadioTransportCallback): RadioTransport {
+                created++
+                return SilentTransport(callback)
+            }
+        }
+        val manager = RadioConnectionManager(factory, scope(), handshakeTimeout = 30.seconds)
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceTimeBy(31.seconds)
+        advanceUntilIdle()
+        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+
+        assertEquals(
+            "после разрыва по таймауту тот же адрес должен подключаться заново",
+            2,
+            created,
+        )
     }
 }
