@@ -76,6 +76,10 @@ class RadioConnectionManager(
                 watchdog?.cancel()
                 closeTransportLocked()
                 _packetLog.value = emptyList()
+                // Осушаем канал: иначе кадры прошлой сессии занимают буфер, и новая
+                // сессия теряет свои собственные, показывая при этом нулевой счётчик потерь.
+                @Suppress("ControlFlowWithEmptyBody")
+                while (_packets.tryReceive().isSuccess) {}
                 droppedFrames = 0
                 currentAddress = address
                 try {
