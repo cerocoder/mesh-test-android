@@ -1,12 +1,11 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "com.cerocoder.meshtest"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.cerocoder.meshtest"
@@ -36,13 +35,6 @@ android {
     // Без этой строки любой вызов Log в JVM-тесте падает с "not mocked".
     testOptions {
         unitTests.isReturnDefaultValues = true
-    }
-}
-
-// Блок верхнего уровня: расширение kotlin принадлежит плагину Kotlin, а не android {}.
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
