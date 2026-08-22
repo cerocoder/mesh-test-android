@@ -129,6 +129,16 @@ class RadioConnectionManager(
         watchdog?.cancel()
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
         _connectionState.value = ConnectionState.Disconnected
+        if (isPermanent) {
+            // Владелец обязан освободить транспорт: сам он о себе не позаботится,
+            // а за швом это будет живое GATT-соединение.
+            scope.launch {
+                transportMutex.withLock {
+                    closeTransportLocked()
+                    currentAddress = null
+                }
+            }
+        }
     }
 
     override fun onDataReceived(bytes: ByteArray) {
