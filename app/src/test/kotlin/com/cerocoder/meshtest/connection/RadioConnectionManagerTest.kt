@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -20,6 +21,7 @@ import org.junit.Test
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.ToRadio
 import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.seconds
 
 /** Фабрика, отдающая фейковый транспорт без задержек. */
 private class TestFactory(private val scope: CoroutineScope) : RadioTransportFactory {
@@ -54,6 +56,18 @@ private class RecordingTransport(private val callback: RadioTransportCallback) :
     override suspend fun close() {
         events += "закрытие"
     }
+}
+
+/** Транспорт, который подключается, но никогда не отвечает на запросы. */
+private class SilentTransport(private val callback: RadioTransportCallback) : RadioTransport {
+    override fun start() = callback.onConnect()
+    override fun send(bytes: ByteArray) = Unit
+    override suspend fun close() = Unit
+}
+
+private class SilentFactory : RadioTransportFactory {
+    override fun create(address: String, callback: RadioTransportCallback): RadioTransport =
+        SilentTransport(callback)
 }
 
 class RadioConnectionManagerTest {
@@ -173,5 +187,80 @@ class RadioConnectionManagerTest {
         advanceUntilIdle()
 
         assertEquals(listOf("прощание", "закрытие"), requireNotNull(transport).events)
+    }
+
+    @Test
+    fun `молчащая нода переводит соединение в Disconnected по таймауту`() = runTest {
+        val manager = RadioConnectionManager(
+            factory = SilentFactory(),
+            scope = scope(),
+            handshakeTimeout = 30.seconds,
+        )
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceTimeBy(31.seconds)
+        advanceUntilIdle()
+
+        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+    }
+
+    @Test
+    fun `до истечения таймаута соединение остаётся в Connecting`() = runTest {
+        val manager = RadioConnectionManager(
+            factory = SilentFactory(),
+            scope = scope(),
+            handshakeTimeout = 30.seconds,
+        )
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceTimeBy(29.seconds)
+
+        assertEquals(ConnectionState.Connecting, manager.connectionState.value)
+    }
+
+    @Test
+    fun `повторное подключение к тому же адресу не пересоздаёт транспорт`() = runTest {
+        val factory = TestFactory(scope())
+        val manager = RadioConnectionManager(factory, scope())
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+
+        assertEquals(1, factory.createdCount)
+    }
+
+    @Test
+    fun `подключение к другому адресу пересоздаёт транспорт`() = runTest {
+        val factory = TestFactory(scope())
+        val manager = RadioConnectionManager(factory, scope())
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+        manager.connect("m:${Scenarios.EMPTY_MESH_ID}")
+        advanceUntilIdle()
+
+        assertEquals(2, factory.createdCount)
+    }
+
+    @Test
+    fun `слишком большой кадр отбрасывается`() = runTest {
+        val manager = RadioConnectionManager(TestFactory(scope()), scope())
+
+        manager.onDataReceived(ByteArray(MeshProtocol.MAX_FRAME_BYTES + 1))
+        advanceUntilIdle()
+
+        assertTrue(manager.packetLog.value.isEmpty())
+    }
+
+    @Test
+    fun `битый кадр не попадает в лог и не роняет менеджер`() = runTest {
+        val manager = RadioConnectionManager(TestFactory(scope()), scope())
+
+        manager.onDataReceived(byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
+        advanceUntilIdle()
+
+        assertTrue(manager.packetLog.value.isEmpty())
     }
 }

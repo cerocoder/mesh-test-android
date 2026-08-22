@@ -6,7 +6,9 @@ import com.cerocoder.meshtest.transport.RadioTransport
 import com.cerocoder.meshtest.transport.RadioTransportCallback
 import com.cerocoder.meshtest.transport.RadioTransportFactory
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,11 +56,19 @@ class RadioConnectionManager(
     private val transportMutex = Mutex()
     private var transport: RadioTransport? = null
     private var currentAddress: String? = null
+    private var watchdog: Job? = null
 
     /** Подключиться к устройству по внутреннему адресу. */
     fun connect(address: String) {
         scope.launch {
             transportMutex.withLock {
+                // Идемпотентность: повторный тап по уже подключённому устройству не
+                // должен пересоздавать транспорт — иначе останутся два транспорта,
+                // пишущих в один канал.
+                if (address == currentAddress && _connectionState.value != ConnectionState.Disconnected) {
+                    Log.d(TAG, "уже подключены к этому адресу, повтор игнорируем")
+                    return@withLock
+                }
                 closeTransportLocked()
                 _packetLog.value = emptyList()
                 droppedFrames = 0
@@ -73,6 +83,7 @@ class RadioConnectionManager(
     /** Отключиться и освободить транспорт. */
     suspend fun disconnect() {
         transportMutex.withLock {
+            watchdog?.cancel()
             transport?.let { active ->
                 // Вежливое прощание: даём ноде понять, что разрыв намеренный.
                 active.send(ToRadio(disconnect = true).encode())
@@ -97,10 +108,12 @@ class RadioConnectionManager(
     override fun onConnect() {
         _connectionState.value = ConnectionState.Connecting
         Log.i(TAG, "связь установлена, запускаем стадию 1 handshake")
+        startHandshakeWatchdog()
         sendToRadio(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE))
     }
 
     override fun onDisconnect(isPermanent: Boolean) {
+        watchdog?.cancel()
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
         _connectionState.value = ConnectionState.Disconnected
     }
@@ -127,6 +140,7 @@ class RadioConnectionManager(
             }
 
             MeshProtocol.NODE_INFO_NONCE -> {
+                watchdog?.cancel()
                 Log.i(TAG, "handshake завершён")
                 _connectionState.value = ConnectionState.Connected
             }
@@ -145,6 +159,22 @@ class RadioConnectionManager(
             return
         }
         active.send(message.encode())
+    }
+
+    /**
+     * Страховка от «тихого» зависания: физическая связь есть, но нода не отвечает
+     * на want_config_id. Без неё приложение осталось бы в Connecting навсегда.
+     */
+    private fun startHandshakeWatchdog() {
+        watchdog?.cancel()
+        watchdog = scope.launch {
+            delay(handshakeTimeout)
+            if (_connectionState.value == ConnectionState.Connecting) {
+                Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
+                transportMutex.withLock { closeTransportLocked() }
+                _connectionState.value = ConnectionState.Disconnected
+            }
+        }
     }
 
     private companion object {
