@@ -36,7 +36,7 @@ fun PacketLogScreen(packets: List<FromRadio>, onBack: () -> Unit) {
 
     LaunchedEffect(packets.size) {
         if (packets.isNotEmpty() && atBottom) {
-            listState.animateScrollToItem(packets.lastIndex)
+            listState.scrollToItem(packets.lastIndex)
         }
     }
 

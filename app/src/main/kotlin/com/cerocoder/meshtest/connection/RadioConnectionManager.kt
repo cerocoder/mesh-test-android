@@ -23,6 +23,8 @@ import kotlinx.coroutines.withContext
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -52,11 +54,15 @@ class RadioConnectionManager(
     private val _packetLog = MutableStateFlow<List<FromRadio>>(emptyList())
     val packetLog: StateFlow<List<FromRadio>> = _packetLog.asStateFlow()
 
-    var droppedFrames: Int = 0
-        private set
+    private val droppedFrameCount = AtomicInteger(0)
+    val droppedFrames: Int get() = droppedFrameCount.get()
 
     private val transportMutex = Mutex()
+
+    @Volatile
     private var transport: RadioTransport? = null
+
+    @Volatile
     private var currentAddress: String? = null
     private var watchdog: Job? = null
 
@@ -80,7 +86,7 @@ class RadioConnectionManager(
                 // сессия теряет свои собственные, показывая при этом нулевой счётчик потерь.
                 @Suppress("ControlFlowWithEmptyBody")
                 while (_packets.tryReceive().isSuccess) {}
-                droppedFrames = 0
+                droppedFrameCount.set(0)
                 currentAddress = address
                 try {
                     val created = factory.create(address, this@RadioConnectionManager)
@@ -174,7 +180,7 @@ class RadioConnectionManager(
         }
 
         if (_packets.trySend(frame).isFailure) {
-            droppedFrames++
+            droppedFrameCount.incrementAndGet()
         }
         _packetLog.update { log -> (log + frame).takeLast(PACKET_LOG_LIMIT) }
     }

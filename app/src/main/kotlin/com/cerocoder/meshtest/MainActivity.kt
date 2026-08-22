@@ -8,8 +8,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.cerocoder.meshtest.ui.DeviceListScreen
@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier) {
-                    var showLog by remember { mutableStateOf(false) }
+                    var showLog by rememberSaveable { mutableStateOf(false) }
                     val state by container.connectionManager.connectionState.collectAsState()
                     val packets by container.connectionManager.packetLog.collectAsState()
                     val scope = rememberCoroutineScope()
