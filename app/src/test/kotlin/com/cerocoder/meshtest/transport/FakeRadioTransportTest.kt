@@ -1,6 +1,9 @@
 package com.cerocoder.meshtest.transport
 
 import com.cerocoder.meshtest.emulator.Scenarios
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -34,11 +37,16 @@ private class RecordingCallback : RadioTransportCallback {
 
 class FakeRadioTransportTest {
 
-    private fun transport(callback: RadioTransportCallback, scope: kotlinx.coroutines.CoroutineScope) =
+    /**
+     * Транспорт на невязанном тестовом диспетчере: корутины выполняются сразу при запуске,
+     * поэтому порядок планирования не влияет на результат. Scope намеренно не потомок job
+     * теста — SupervisorJob транспорта сам не завершается, и runTest ждал бы его вечно.
+     */
+    private fun TestScope.transport(callback: RadioTransportCallback) =
         FakeRadioTransport(
             scenario = requireNotNull(Scenarios.byId(Scenarios.FIVE_NODES_ID)),
             callback = callback,
-            parentScope = scope,
+            parentScope = CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
             connectDelay = ZERO,
             frameDelay = ZERO,
         )
@@ -47,7 +55,7 @@ class FakeRadioTransportTest {
     fun `после старта транспорт сообщает о подключении`() = runTest {
         val callback = RecordingCallback()
 
-        transport(callback, backgroundScope).start()
+        transport(callback).start()
         advanceUntilIdle()
 
         assertTrue(callback.connected)
@@ -56,7 +64,7 @@ class FakeRadioTransportTest {
     @Test
     fun `на запрос конфигурации отдаёт стадию 1 в правильном порядке`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE).encode())
@@ -69,7 +77,7 @@ class FakeRadioTransportTest {
     @Test
     fun `на запрос базы нод отдаёт стадию 2`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(ToRadio(want_config_id = MeshProtocol.NODE_INFO_NONCE).encode())
@@ -82,13 +90,14 @@ class FakeRadioTransportTest {
     @Test
     fun `кадрам присваиваются возрастающие идентификаторы`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE).encode())
         advanceUntilIdle()
 
         val ids = callback.frames.map { it.id }
+        assertTrue("кадры не доставлены — тест прошёл бы вхолостую", ids.isNotEmpty())
         assertEquals(ids.sorted(), ids)
         assertEquals(ids.size, ids.toSet().size)
     }
@@ -96,7 +105,7 @@ class FakeRadioTransportTest {
     @Test
     fun `на heartbeat отвечает статусом очереди`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(ToRadio(heartbeat = Heartbeat(nonce = 7)).encode())
@@ -108,7 +117,7 @@ class FakeRadioTransportTest {
     @Test
     fun `на прощальный пакет отвечает постоянным отключением`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(ToRadio(disconnect = true).encode())
@@ -120,7 +129,7 @@ class FakeRadioTransportTest {
     @Test
     fun `мусорные байты не роняют транспорт`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.send(byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
@@ -133,7 +142,7 @@ class FakeRadioTransportTest {
     @Test
     fun `после close новые кадры не приходят`() = runTest {
         val callback = RecordingCallback()
-        val subject = transport(callback, backgroundScope)
+        val subject = transport(callback)
 
         subject.start()
         subject.close()
