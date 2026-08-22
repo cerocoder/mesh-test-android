@@ -20,7 +20,9 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.ToRadio
+import org.meshtastic.proto.User
 import kotlin.time.Duration.Companion.ZERO
 import kotlin.time.Duration.Companion.seconds
 
@@ -248,8 +250,11 @@ class RadioConnectionManagerTest {
     @Test
     fun `слишком большой кадр отбрасывается`() = runTest {
         val manager = RadioConnectionManager(TestFactory(scope()), scope())
+        // Кадр валиден и декодируем — единственная причина не попасть в лог это защита по размеру.
+        val oversized = FromRadio(node_info = NodeInfo(user = User(long_name = "x".repeat(600)))).encode()
+        assertTrue("кадр должен превышать лимит", oversized.size > MeshProtocol.MAX_FRAME_BYTES)
 
-        manager.onDataReceived(ByteArray(MeshProtocol.MAX_FRAME_BYTES + 1))
+        manager.onDataReceived(oversized)
         advanceUntilIdle()
 
         assertTrue(manager.packetLog.value.isEmpty())
