@@ -23,6 +23,13 @@
 - Пакеты `transport/`, `emulator/`, `connection/` тестируются на JVM: никаких Android API, кроме `android.util.Log`.
 - В этапе 1 **нет**: BLE, foreground-сервиса, Hilt, Room, разрешений, инструментальных и Compose-тестов.
 - Все коммиты — на текущей ветке; сообщения на русском, префиксы `feat:` / `test:` / `chore:`.
+- **Верификация только в CI.** В среде разработки нет ни Android SDK, ни Gradle. Реализатор
+  **не запускает Gradle** и **не утверждает, что тесты прошли**: он пишет тест, пишет реализацию
+  и коммитит. Все шаги вида `Run: gradle …` в задачах — это то, что выполнит CI после пуша ветки;
+  их результат прикладывает контроллер, а не реализатор.
+- Gradle wrapper в репозиторий не кладётся (генерировать его нечем). CI ставит Gradle `9.7.1`
+  через `gradle/actions/setup-gradle@v4`, поэтому команды пишутся как `gradle …`, не `gradle …`.
+- JDK 21 предоставляет CI (`actions/setup-java`), локальная версия JDK роли не играет.
 
 ---
 
@@ -155,9 +162,11 @@ plugins {
 /captures
 .externalNativeBuild
 .cxx
+.claude/
+.superpowers/
 ```
 
-Сгенерировать Gradle wrapper: `gradle wrapper --gradle-version 8.14` (или версию, которую требует AGP 9.3.1 — если Gradle сообщит о несовместимости, поднять до указанной им).
+Gradle wrapper не создаётся: в среде нет Gradle. Его ставит CI (см. шаг 7).
 
 - [ ] **Step 2: Написать падающий smoke-тест**
 
@@ -185,7 +194,7 @@ class ProtobufSmokeTest {
 
 - [ ] **Step 3: Запустить тест и убедиться, что он не компилируется**
 
-Run: `./gradlew :app:testDebugUnitTest`
+Run: `gradle :app:testDebugUnitTest`
 Expected: FAIL — `Unresolved reference: meshtastic` (зависимость ещё не добавлена).
 
 - [ ] **Step 4: Добавить конфигурацию модуля и зависимости**
@@ -222,12 +231,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
-        }
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -237,6 +240,13 @@ android {
     // Без этой строки любой вызов Log в JVM-тесте падает с "not mocked".
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+// Блок верхнего уровня: расширение kotlin принадлежит плагину Kotlin, а не android {}.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
@@ -266,7 +276,7 @@ dependencies {
         android:allowBackup="true"
         android:label="Mesh Test"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
             android:name=".MainActivity"
@@ -308,12 +318,12 @@ class MainActivity : ComponentActivity() {
 
 - [ ] **Step 5: Запустить тест — должен пройти**
 
-Run: `./gradlew :app:testDebugUnitTest`
+Run: `gradle :app:testDebugUnitTest`
 Expected: PASS, 1 тест.
 
 - [ ] **Step 6: Проверить сборку APK**
 
-Run: `./gradlew :app:assembleDebug`
+Run: `gradle :app:assembleDebug`
 Expected: BUILD SUCCESSFUL, файл `app/build/outputs/apk/debug/app-debug.apk` существует.
 
 - [ ] **Step 7: Добавить CI**
@@ -337,10 +347,18 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.7.1'
       - name: Тесты
-        run: ./gradlew :app:testDebugUnitTest
+        run: gradle :app:testDebugUnitTest
       - name: Сборка APK
-        run: ./gradlew :app:assembleDebug
+        run: gradle :app:assembleDebug
+      - name: Отчёты тестов (при падении)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
@@ -350,7 +368,7 @@ jobs:
 - [ ] **Step 8: Коммит**
 
 ```bash
-git add settings.gradle.kts build.gradle.kts gradle app .github .gitignore gradlew gradlew.bat
+git add settings.gradle.kts build.gradle.kts gradle app .github .gitignore
 git commit -m "chore: каркас Android-проекта, Wire-модели Meshtastic и CI"
 ```
 
@@ -420,7 +438,7 @@ class MeshProtocolTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*MeshProtocolTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*MeshProtocolTest*"`
 Expected: FAIL — `Unresolved reference: MeshProtocol`.
 
 - [ ] **Step 3: Реализовать**
@@ -498,7 +516,7 @@ sealed class DeviceListEntry {
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*MeshProtocolTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*MeshProtocolTest*"`
 Expected: PASS, 7 тестов.
 
 - [ ] **Step 5: Коммит**
@@ -623,7 +641,7 @@ class ScenariosTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*ScenariosTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*ScenariosTest*"`
 Expected: FAIL — `Unresolved reference: Scenarios`.
 
 - [ ] **Step 3: Реализовать модель сценария**
@@ -810,7 +828,7 @@ object Scenarios {
 
 - [ ] **Step 5: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*ScenariosTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*ScenariosTest*"`
 Expected: PASS, 9 тестов.
 
 - [ ] **Step 6: Коммит**
@@ -935,7 +953,7 @@ class FakeRadioTransportTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
 Expected: FAIL — `Unresolved reference: RadioTransportCallback`.
 
 - [ ] **Step 3: Объявить шов**
@@ -1072,7 +1090,7 @@ class FakeRadioTransport(
 
 - [ ] **Step 5: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
 Expected: PASS, 4 теста.
 
 - [ ] **Step 6: Коммит**
@@ -1152,7 +1170,7 @@ git commit -m "feat: шов транспорта и handshake фейкового
 
 - [ ] **Step 2: Запустить тесты и убедиться, что новые падают**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
 Expected: FAIL — `на heartbeat отвечает статусом очереди` и `на прощальный пакет отвечает постоянным отключением` не проходят (кадров нет, отключения нет).
 
 - [ ] **Step 3: Дополнить реализацию**
@@ -1185,7 +1203,7 @@ Expected: FAIL — `на heartbeat отвечает статусом очере�
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*FakeRadioTransportTest*"`
 Expected: PASS, 8 тестов.
 
 - [ ] **Step 5: Коммит**
@@ -1312,7 +1330,7 @@ class RadioConnectionManagerTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
 Expected: FAIL — `Unresolved reference: RadioConnectionManager`.
 
 - [ ] **Step 3: Объявить состояния**
@@ -1501,7 +1519,7 @@ class RadioConnectionManager(
 
 - [ ] **Step 5: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
 Expected: PASS, 6 тестов.
 
 - [ ] **Step 6: Коммит**
@@ -1618,7 +1636,7 @@ git commit -m "feat: менеджер соединения с двухстади
 
 - [ ] **Step 2: Запустить тесты и убедиться, что новые падают**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
 Expected: FAIL — тесты про таймаут и про повторное подключение не проходят (watchdog отсутствует, транспорт пересоздаётся всегда).
 
 - [ ] **Step 3: Добавить watchdog и проверку адреса**
@@ -1711,7 +1729,7 @@ Expected: FAIL — тесты про таймаут и про повторное
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioConnectionManagerTest*"`
 Expected: PASS, 12 тестов.
 
 - [ ] **Step 5: Коммит**
@@ -1797,7 +1815,7 @@ class RadioTransportFactoryImplTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioTransportFactoryImplTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioTransportFactoryImplTest*"`
 Expected: FAIL — `Unresolved reference: RadioTransportFactoryImpl`.
 
 - [ ] **Step 3: Реализовать фабрику**
@@ -1842,7 +1860,7 @@ class RadioTransportFactoryImpl(
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*RadioTransportFactoryImplTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*RadioTransportFactoryImplTest*"`
 Expected: PASS, 4 теста.
 
 - [ ] **Step 5: Собрать контейнер зависимостей**
@@ -1911,7 +1929,7 @@ class MeshTestApp : Application() {
 
 - [ ] **Step 6: Проверить сборку**
 
-Run: `./gradlew :app:assembleDebug :app:testDebugUnitTest`
+Run: `gradle :app:assembleDebug :app:testDebugUnitTest`
 Expected: BUILD SUCCESSFUL, все тесты проходят.
 
 - [ ] **Step 7: Коммит**
@@ -1997,7 +2015,7 @@ class PacketFormatterTest {
 
 - [ ] **Step 2: Запустить тест и убедиться, что он падает**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*PacketFormatterTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*PacketFormatterTest*"`
 Expected: FAIL — `Unresolved reference: formatPacket`.
 
 - [ ] **Step 3: Реализовать форматтер**
@@ -2058,7 +2076,7 @@ private fun configKind(frame: FromRadio): String {
 
 - [ ] **Step 4: Запустить тесты — должны пройти**
 
-Run: `./gradlew :app:testDebugUnitTest --tests "*PacketFormatterTest*"`
+Run: `gradle :app:testDebugUnitTest --tests "*PacketFormatterTest*"`
 Expected: PASS, 5 тестов.
 
 - [ ] **Step 5: Написать экран списка устройств**
@@ -2251,7 +2269,7 @@ class MainActivity : ComponentActivity() {
 
 - [ ] **Step 8: Полная проверка сборки и тестов**
 
-Run: `./gradlew :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest`
+Run: `gradle :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest`
 Expected: BUILD SUCCESSFUL, все тесты проходят (46 тестов: 1 + 7 + 9 + 8 + 12 + 4 + 5).
 
 - [ ] **Step 9: Ручная приёмка на эмуляторе**
@@ -2264,7 +2282,7 @@ Expected: BUILD SUCCESSFUL, все тесты проходят (46 тестов:
 4. «Demo: 200 нод» доводит соединение до `подключено`, лента содержит 200 кадров `NodeInfo`;
 5. «Отключиться» возвращает состояние в `отключено`.
 
-Проверить release-сборку: `./gradlew :app:installRelease` (или собрать APK и поставить вручную) — список устройств пуст, показывается пояснение.
+Проверить release-сборку: `gradle :app:installRelease` (или собрать APK и поставить вручную) — список устройств пуст, показывается пояснение.
 
 - [ ] **Step 10: Коммит**
 
