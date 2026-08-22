@@ -4,6 +4,7 @@ import org.meshtastic.proto.Channel
 import org.meshtastic.proto.ChannelSettings
 import org.meshtastic.proto.Config
 import org.meshtastic.proto.DeviceMetadata
+import org.meshtastic.proto.ModuleConfig
 import org.meshtastic.proto.MyNodeInfo
 import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.User
@@ -56,8 +57,12 @@ object Scenarios {
             Config(lora = Config.LoRaConfig()),
             Config(bluetooth = Config.BluetoothConfig()),
         ),
-        // Конфигурация модулей на этапе 1 не нужна: её никто не отображает.
-        moduleConfig = emptyList(),
+        // Две секции конфигурации модулей: без них ветка moduleConfig в of() была бы
+        // мёртвой, а порядок кадров в этом сегменте — непроверяемым.
+        moduleConfig = listOf(
+            ModuleConfig(telemetry = ModuleConfig.TelemetryConfig()),
+            ModuleConfig(mqtt = ModuleConfig.MQTTConfig()),
+        ),
         channels = List(channelCount) { index ->
             Channel(
                 index = index,

@@ -90,4 +90,21 @@ class ScenariosTest {
 
         assertEquals(0, empty.nodeStageFrames(MeshProtocol.NODE_INFO_NONCE).count { it.node_info != null })
     }
+
+    @Test
+    fun `кадры стадии 1 идут в порядке настоящей прошивки`() {
+        val frames = scenario.configStageFrames(MeshProtocol.CONFIG_NONCE)
+
+        val myInfo = frames.indexOfFirst { it.my_info != null }
+        val metadata = frames.indexOfFirst { it.metadata != null }
+        val firstConfig = frames.indexOfFirst { it.config != null }
+        val firstModuleConfig = frames.indexOfFirst { it.moduleConfig != null }
+        val firstChannel = frames.indexOfFirst { it.channel != null }
+
+        assertTrue("MyNodeInfo должен быть раньше метаданных", myInfo < metadata)
+        assertTrue("метаданные раньше конфигурации", metadata < firstConfig)
+        assertTrue("конфигурация раньше конфигурации модулей", firstConfig < firstModuleConfig)
+        assertTrue("конфигурация модулей раньше каналов", firstModuleConfig < firstChannel)
+        assertTrue("подтверждение замыкает стадию", firstChannel < frames.lastIndex)
+    }
 }
