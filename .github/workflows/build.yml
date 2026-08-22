@@ -4,6 +4,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,16 +23,50 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.7.1'
-      - name: Тесты
-        run: gradle :app:testDebugUnitTest
-      - name: Сборка APK
-        run: gradle :app:assembleDebug
+
+      - name: 1 Конфигурация проекта
+        run: gradle :app:tasks 2>&1 | tee -a /tmp/gradle.log
+
+      - name: 2 Резолвинг зависимостей
+        run: gradle :app:dependencies --configuration debugCompileClasspath 2>&1 | tee -a /tmp/gradle.log
+
+      - name: 3 Компиляция main
+        run: gradle :app:compileDebugKotlin 2>&1 | tee -a /tmp/gradle.log
+
+      - name: 4 Компиляция тестов
+        run: gradle :app:compileDebugUnitTestKotlin 2>&1 | tee -a /tmp/gradle.log
+
+      - name: 5 Прогон тестов
+        run: gradle :app:testDebugUnitTest 2>&1 | tee -a /tmp/gradle.log
+
+      - name: 6 Сборка APK
+        run: gradle :app:assembleDebug 2>&1 | tee -a /tmp/gradle.log
+
+      - name: Опубликовать хвост ошибки в комментарий к коммиту
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          TAIL=$(tail -c 50000 /tmp/gradle.log 2>/dev/null || echo "лог отсутствует")
+          python3 - "$TAIL" <<'PY' > payload.json
+          import json, sys
+          print(json.dumps({"body": "Падение CI. Хвост вывода Gradle:\n\n```\n" + sys.argv[1] + "\n```"}))
+          PY
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/comments" \
+            -d @payload.json
+
       - name: Отчёты тестов (при падении)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: app/build/reports/
+
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
