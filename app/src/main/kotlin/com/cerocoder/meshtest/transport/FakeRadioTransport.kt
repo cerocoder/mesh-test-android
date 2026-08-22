@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -32,7 +33,9 @@ class FakeRadioTransport(
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
 
-    private var nextFrameId = 1
+    // Атомарный, а не обычный Int: emit() запускает корутины на parentScope, который в приложении
+    // многопоточный (Dispatchers.Default). Обычный инкремент здесь — гонка, ломающая уникальность id.
+    private val nextFrameId = AtomicInteger(1)
 
     override fun start() {
         scope.launch {
@@ -64,7 +67,7 @@ class FakeRadioTransport(
         scope.launch {
             frames.forEach { frame ->
                 delay(frameDelay)
-                callback.onDataReceived(frame.copy(id = nextFrameId++).encode())
+                callback.onDataReceived(frame.copy(id = nextFrameId.getAndIncrement()).encode())
             }
         }
     }
