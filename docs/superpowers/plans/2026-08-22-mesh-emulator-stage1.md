@@ -14,7 +14,10 @@
 
 - Пакет приложения: `com.cerocoder.meshtest`. Application ID тот же.
 - `minSdk = 26`, `compileSdk = 36`, `targetSdk = 36`.
-- Инструменты: AGP `9.3.1`, Kotlin `2.4.10`, Compose BOM `2026.08.00`, JDK `21`.
+- Инструменты: AGP `8.13.2`, Kotlin `2.4.10`, Compose BOM `2026.08.00`, JDK `21`.
+  AGP намеренно из ветки 8.x: AGP 9 несёт встроенную поддержку Kotlin и отвергает плагин
+  `org.jetbrains.kotlin.android`, а замену для настройки компилятора и судьбу compose-плагина
+  в релиз-нотах не описывает. Проверено прогоном CI — сборка падала на применении плагина.
 - Протокол: `org.meshtastic:protobufs:2.7.26` (Wire-модели, пакет `org.meshtastic.proto`), явно добавить `com.squareup.wire:wire-runtime:6.4.5` в compile-классpath.
 - Тесты: `org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0`.
 - Нонсы handshake: `CONFIG_NONCE = 69420`, `NODE_INFO_NONCE = 69421`. Максимальный размер кадра — 512 байт.
@@ -113,7 +116,7 @@ include(":app")
 
 ```toml
 [versions]
-agp = "9.3.1"
+agp = "8.13.2"
 kotlin = "2.4.10"
 composeBom = "2026.08.00"
 coroutines = "1.11.0"
