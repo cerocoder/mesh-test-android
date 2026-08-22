@@ -78,9 +78,15 @@ class RadioConnectionManager(
                 _packetLog.value = emptyList()
                 droppedFrames = 0
                 currentAddress = address
-                val created = factory.create(address, this@RadioConnectionManager)
-                transport = created
-                created.start()
+                try {
+                    val created = factory.create(address, this@RadioConnectionManager)
+                    transport = created
+                    created.start()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "не удалось создать транспорт для адреса", e)
+                    transport = null
+                    _connectionState.value = ConnectionState.Disconnected
+                }
             }
         }
     }
@@ -105,7 +111,7 @@ class RadioConnectionManager(
         transport?.let { active ->
             try {
                 active.close()
-            } catch (e: IOException) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "ошибка при закрытии транспорта", e)
             }
         }
