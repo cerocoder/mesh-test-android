@@ -1,0 +1,155 @@
+package com.cerocoder.meshtest.connection
+
+import android.util.Log
+import com.cerocoder.meshtest.transport.MeshProtocol
+import com.cerocoder.meshtest.transport.RadioTransport
+import com.cerocoder.meshtest.transport.RadioTransportCallback
+import com.cerocoder.meshtest.transport.RadioTransportFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.ToRadio
+import java.io.IOException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Единственный владелец активного транспорта.
+ *
+ * Ведёт двухстадийный handshake, публикует состояние соединения и поток
+ * принятых кадров. Не знает, что под ним — демо-устройство или BLE.
+ */
+class RadioConnectionManager(
+    private val factory: RadioTransportFactory,
+    private val scope: CoroutineScope,
+    private val handshakeTimeout: Duration = 30.seconds,
+) : RadioTransportCallback {
+
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+
+    // Channel, а не SharedFlow: строгий FIFO обязателен — порядок кадров конфигурации
+    // определяет корректность handshake. При переполнении отбрасывается новейший кадр,
+    // чтобы уже принятые сохранили порядок.
+    private val _packets = Channel<FromRadio>(capacity = PACKET_QUEUE_CAPACITY)
+    val packets: Flow<FromRadio> = _packets.receiveAsFlow()
+
+    // Отдельный накопитель для диагностического экрана: у Channel один потребитель,
+    // и переподписка UI теряла бы кадры.
+    private val _packetLog = MutableStateFlow<List<FromRadio>>(emptyList())
+    val packetLog: StateFlow<List<FromRadio>> = _packetLog.asStateFlow()
+
+    var droppedFrames: Int = 0
+        private set
+
+    private val transportMutex = Mutex()
+    private var transport: RadioTransport? = null
+    private var currentAddress: String? = null
+
+    /** Подключиться к устройству по внутреннему адресу. */
+    fun connect(address: String) {
+        scope.launch {
+            transportMutex.withLock {
+                closeTransportLocked()
+                _packetLog.value = emptyList()
+                droppedFrames = 0
+                currentAddress = address
+                val created = factory.create(address, this@RadioConnectionManager)
+                transport = created
+                created.start()
+            }
+        }
+    }
+
+    /** Отключиться и освободить транспорт. */
+    suspend fun disconnect() {
+        transportMutex.withLock {
+            transport?.let { active ->
+                // Вежливое прощание: даём ноде понять, что разрыв намеренный.
+                active.send(ToRadio(disconnect = true).encode())
+            }
+            closeTransportLocked()
+            currentAddress = null
+        }
+        _connectionState.value = ConnectionState.Disconnected
+    }
+
+    private suspend fun closeTransportLocked() {
+        transport?.let { active ->
+            try {
+                active.close()
+            } catch (e: IOException) {
+                Log.w(TAG, "ошибка при закрытии транспорта", e)
+            }
+        }
+        transport = null
+    }
+
+    override fun onConnect() {
+        _connectionState.value = ConnectionState.Connecting
+        Log.i(TAG, "связь установлена, запускаем стадию 1 handshake")
+        sendToRadio(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE))
+    }
+
+    override fun onDisconnect(isPermanent: Boolean) {
+        Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
+        _connectionState.value = ConnectionState.Disconnected
+    }
+
+    override fun onDataReceived(bytes: ByteArray) {
+        if (bytes.size > MeshProtocol.MAX_FRAME_BYTES) {
+            Log.w(TAG, "кадр ${bytes.size} байт превышает лимит ${MeshProtocol.MAX_FRAME_BYTES}, отброшен")
+            return
+        }
+
+        val frame = try {
+            FromRadio.ADAPTER.decode(bytes)
+        } catch (e: IOException) {
+            // Один битый кадр не должен обрывать приём: это единственный канал,
+            // по которому в приложение вообще попадают данные.
+            Log.w(TAG, "не удалось разобрать FromRadio (${bytes.size} байт)", e)
+            return
+        }
+
+        when (frame.config_complete_id) {
+            MeshProtocol.CONFIG_NONCE -> {
+                Log.i(TAG, "стадия 1 завершена, запрашиваем базу нод")
+                sendToRadio(ToRadio(want_config_id = MeshProtocol.NODE_INFO_NONCE))
+            }
+
+            MeshProtocol.NODE_INFO_NONCE -> {
+                Log.i(TAG, "handshake завершён")
+                _connectionState.value = ConnectionState.Connected
+            }
+        }
+
+        if (_packets.trySend(frame).isFailure) {
+            droppedFrames++
+        }
+        _packetLog.update { log -> (log + frame).takeLast(PACKET_LOG_LIMIT) }
+    }
+
+    private fun sendToRadio(message: ToRadio) {
+        val active = transport
+        if (active == null) {
+            Log.w(TAG, "нет активного транспорта, пакет отброшен")
+            return
+        }
+        active.send(message.encode())
+    }
+
+    private companion object {
+        const val TAG = "RadioConnectionManager"
+        const val PACKET_QUEUE_CAPACITY = 256
+        const val PACKET_LOG_LIMIT = 500
+    }
+}
