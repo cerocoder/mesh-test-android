@@ -151,4 +151,14 @@ class FakeRadioTransportTest {
 
         assertTrue(callback.frames.isEmpty())
     }
+
+    @Test
+    fun `подтверждение стадии возвращает полученный нонс, а не константу`() = runTest {
+        val callback = RecordingCallback()
+        val scenario = requireNotNull(Scenarios.byId(Scenarios.FIVE_NODES_ID))
+
+        val frames = scenario.configStageFrames(4242)
+
+        assertEquals(4242, frames.last().config_complete_id)
+    }
 }

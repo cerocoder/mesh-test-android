@@ -53,12 +53,16 @@ class FakeRadioTransport(
             return
         }
 
+        // Локальная переменная, а не message.want_config_id напрямую: свойство объявлено
+        // в другом модуле (артефакт protobufs), и компилятор не приводит его к non-null
+        // по равенству — только локальная val поддаётся smart cast.
+        val nonce = message.want_config_id
         when {
-            message.want_config_id == MeshProtocol.CONFIG_NONCE ->
-                emit(scenario.configStageFrames(MeshProtocol.CONFIG_NONCE))
+            nonce == MeshProtocol.CONFIG_NONCE ->
+                emit(scenario.configStageFrames(nonce))
 
-            message.want_config_id == MeshProtocol.NODE_INFO_NONCE ->
-                emit(scenario.nodeStageFrames(MeshProtocol.NODE_INFO_NONCE))
+            nonce == MeshProtocol.NODE_INFO_NONCE ->
+                emit(scenario.nodeStageFrames(nonce))
 
             // Настоящая прошивка отвечает на heartbeat статусом очереди — это
             // доказывает, что связь жива. Без ответа демо вело бы себя не как нода.
