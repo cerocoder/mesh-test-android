@@ -4,6 +4,7 @@
     <application
         android:allowBackup="true"
         android:label="Mesh Test"
+        android:name=".MeshTestApp"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
