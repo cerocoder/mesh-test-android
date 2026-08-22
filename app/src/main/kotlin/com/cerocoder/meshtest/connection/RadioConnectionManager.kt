@@ -69,6 +69,9 @@ class RadioConnectionManager(
                     Log.d(TAG, "уже подключены к этому адресу, повтор игнорируем")
                     return@withLock
                 }
+                // Снимаем сторожевой таймер прошлой сессии: иначе он может сработать уже по
+                // новому транспорту и оборвать здоровое соединение.
+                watchdog?.cancel()
                 closeTransportLocked()
                 _packetLog.value = emptyList()
                 droppedFrames = 0
@@ -169,10 +172,12 @@ class RadioConnectionManager(
         watchdog?.cancel()
         watchdog = scope.launch {
             delay(handshakeTimeout)
-            if (_connectionState.value == ConnectionState.Connecting) {
-                Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
-                transportMutex.withLock { closeTransportLocked() }
-                _connectionState.value = ConnectionState.Disconnected
+            transportMutex.withLock {
+                if (_connectionState.value == ConnectionState.Connecting) {
+                    Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
+                    closeTransportLocked()
+                    _connectionState.value = ConnectionState.Disconnected
+                }
             }
         }
     }
