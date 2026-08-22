@@ -7,6 +7,7 @@ import com.cerocoder.meshtest.transport.RadioTransportCallback
 import com.cerocoder.meshtest.transport.RadioTransportFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
@@ -85,16 +87,18 @@ class RadioConnectionManager(
 
     /** Отключиться и освободить транспорт. */
     suspend fun disconnect() {
-        transportMutex.withLock {
-            watchdog?.cancel()
-            transport?.let { active ->
-                // Вежливое прощание: даём ноде понять, что разрыв намеренный.
-                active.send(ToRadio(disconnect = true).encode())
+        withContext(NonCancellable) {
+            transportMutex.withLock {
+                watchdog?.cancel()
+                transport?.let { active ->
+                    // Вежливое прощание: даём ноде понять, что разрыв намеренный.
+                    active.send(ToRadio(disconnect = true).encode())
+                }
+                closeTransportLocked()
+                currentAddress = null
             }
-            closeTransportLocked()
-            currentAddress = null
+            _connectionState.value = ConnectionState.Disconnected
         }
-        _connectionState.value = ConnectionState.Disconnected
     }
 
     private suspend fun closeTransportLocked() {
