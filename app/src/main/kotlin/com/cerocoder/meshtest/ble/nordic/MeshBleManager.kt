@@ -113,8 +113,20 @@ class MeshBleManager(context: Context) : BleManager(context) {
      * придётся. Наблюдателя подключений больше никто не ставит: библиотека
      * позволяет только одного и бросает при попытке поставить второго.
      */
-    suspend fun awaitDisconnect() {
-        stateAsFlow().first { it is ConnectionState.Disconnected }
+    suspend fun awaitDisconnect(): String {
+        val state = stateAsFlow().first { it is ConnectionState.Disconnected }
+        return disconnectReasonText((state as ConnectionState.Disconnected).reason)
+    }
+
+    private fun disconnectReasonText(reason: ConnectionState.Disconnected.Reason): String = when (reason) {
+        ConnectionState.Disconnected.Reason.LINK_LOSS -> "связь потеряна: нода вне зоны действия"
+        ConnectionState.Disconnected.Reason.TERMINATE_PEER_USER -> "нода разорвала связь сама"
+        ConnectionState.Disconnected.Reason.TERMINATE_LOCAL_HOST -> "связь разорвана телефоном"
+        ConnectionState.Disconnected.Reason.TIMEOUT -> "нода не ответила на подключение"
+        ConnectionState.Disconnected.Reason.NOT_SUPPORTED -> "у ноды нет нужного сервиса Meshtastic"
+        ConnectionState.Disconnected.Reason.CANCELLED -> "подключение отменено"
+        ConnectionState.Disconnected.Reason.SUCCESS -> "связь закрыта штатно"
+        ConnectionState.Disconnected.Reason.UNKNOWN -> "связь потеряна по неизвестной причине"
     }
 
     suspend fun read(): ByteArray = readCharacteristic(fromRadio).suspend().value ?: ByteArray(0)

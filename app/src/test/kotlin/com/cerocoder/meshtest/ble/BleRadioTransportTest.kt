@@ -23,8 +23,11 @@ private class RecordingCallback : RadioTransportCallback {
         connects++
     }
 
-    override fun onDisconnect(isPermanent: Boolean) {
+    val reasons = mutableListOf<String?>()
+
+    override fun onDisconnect(isPermanent: Boolean, reason: String?) {
         disconnects++
+        reasons += reason
     }
 
     override fun onDataReceived(bytes: ByteArray) {
@@ -136,11 +139,18 @@ class BleRadioTransportTest {
         // приходить. Ровно так выглядит ушедшая из зоны нода — и ровно этот случай
         // раньше вешал цикл переподключения навсегда, потому что завершения сессии
         // никто не дожидался.
-        sessions[0].signalDisconnect()
+        sessions[0].signalDisconnect("нода ушла из зоны")
         advanceTimeBy(30.seconds)
 
         assertTrue("после разрыва обязана открыться новая сессия", sessions.size >= 2)
         assertTrue("сессия разорванной связи обязана быть закрыта", sessions[0].closed)
+        // Причина обязана дойти до шва: без неё пользователь видит голое
+        // «отключено» и не может отличить уход ноды из зоны от отказа спаривания.
+        assertEquals(
+            "причина разрыва должна дойти до колбэка",
+            "нода ушла из зоны",
+            callback.reasons.firstOrNull(),
+        )
 
         transport.close()
     }

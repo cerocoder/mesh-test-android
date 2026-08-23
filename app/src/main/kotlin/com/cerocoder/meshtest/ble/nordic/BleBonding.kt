@@ -3,6 +3,7 @@ package com.cerocoder.meshtest.ble.nordic
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.util.Log
+import com.cerocoder.meshtest.ble.protocol.BleFailure
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -31,7 +32,7 @@ suspend fun ensureBondedBeforeConnect(device: BluetoothDevice) {
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> return
             BluetoothDevice.BOND_BONDING -> sawBonding = true
-            else -> error("не удалось начать спаривание с ${device.address}")
+            else -> throw BleFailure("не удалось начать спаривание")
         }
     }
 
@@ -61,7 +62,7 @@ suspend fun ensureBondedBeforeConnect(device: BluetoothDevice) {
     } ?: false
 
     if (!bonded) {
-        error("спаривание с ${device.address} не завершилось: состояние ${device.bondState}")
+        throw BleFailure("спаривание не завершилось — код не введён или отклонён")
     }
     Log.i(TAG, "спаривание с ${device.address} подтверждено")
 }

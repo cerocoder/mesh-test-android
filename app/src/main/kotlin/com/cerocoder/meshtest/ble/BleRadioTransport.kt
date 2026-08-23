@@ -1,6 +1,7 @@
 package com.cerocoder.meshtest.ble
 
 import android.util.Log
+import com.cerocoder.meshtest.ble.protocol.BleFailure
 import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshRadioProfile
 import com.cerocoder.meshtest.transport.RadioTransport
@@ -47,27 +48,34 @@ class BleRadioTransport(
                 // handshake.
                 delay(policy.settleDelay)
                 val startedAt = now()
-                runSession()
+                val reason = runSession()
                 val uptime = now() - startedAt
                 val stable = uptime >= policy.minStableConnection.inWholeMilliseconds
                 val failures = policy.onOutcome(wasStable = stable)
-                callback.onDisconnect(isPermanent = false)
+                callback.onDisconnect(isPermanent = false, reason = reason)
                 delay(policy.backoffFor(failures))
             }
         }
     }
 
-    /** Одна попытка «подключиться и жить до разрыва». */
-    private suspend fun runSession() {
+    /**
+     * Одна попытка «подключиться и жить до разрыва».
+     *
+     * Возвращает причину окончания сессии — её увидит пользователь. Слой Nordic
+     * присылает её уже описанной, здесь остаётся лишь запасной текст на случай
+     * ошибки, которую он описать не успел.
+     */
+    private suspend fun runSession(): String? {
         val session = try {
             openSession(mac)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             Log.w(TAG, "не удалось открыть сессию с $mac", e)
-            return
+            return (e as? BleFailure)?.description ?: "не удалось подключиться к ноде"
         }
 
+        var reason: String? = null
         try {
             val radio = MeshRadioProfile(session.client)
             profile = radio
@@ -79,8 +87,8 @@ class BleRadioTransport(
                 // фатальная ошибка чтения, либо сообщение стека о разрыве —
                 // второе и есть единственный сигнал, когда связь умирает в тишине.
                 val watcher = launch {
-                    session.awaitDisconnect()
-                    Log.i(TAG, "стек сообщил о разрыве, завершаем сессию")
+                    reason = session.awaitDisconnect()
+                    Log.i(TAG, "стек сообщил о разрыве: $reason")
                     pump.cancel()
                 }
                 pump.join()
@@ -95,12 +103,14 @@ class BleRadioTransport(
             throw e
         } catch (e: Throwable) {
             Log.w(TAG, "сессия завершилась ошибкой", e)
+            reason = (e as? BleFailure)?.description ?: "сессия прервана"
         } finally {
             profile = null
             // Незакрытая сессия — это утёкшее GATT-соединение и статус 133 при
             // следующей попытке. Закрытие не должно срываться отменой.
             withContext(NonCancellable) { session.close() }
         }
+        return reason
     }
 
     override fun send(bytes: ByteArray) {

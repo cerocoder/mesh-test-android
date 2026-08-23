@@ -12,7 +12,7 @@ import org.junit.Test
 
 private object NoopCallback : RadioTransportCallback {
     override fun onConnect() = Unit
-    override fun onDisconnect(isPermanent: Boolean) = Unit
+    override fun onDisconnect(isPermanent: Boolean, reason: String?) = Unit
     override fun onDataReceived(bytes: ByteArray) = Unit
 }
 

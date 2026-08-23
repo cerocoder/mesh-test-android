@@ -14,7 +14,7 @@ class FakeBleSession(override val client: FakeMeshGattClient = FakeMeshGattClien
     var closed = false
         private set
 
-    private val disconnected = CompletableDeferred<Unit>()
+    private val disconnected = CompletableDeferred<String>()
 
     /**
      * Сообщить о разрыве связи так, как это сделал бы стек Bluetooth.
@@ -22,13 +22,11 @@ class FakeBleSession(override val client: FakeMeshGattClient = FakeMeshGattClien
      * Отдельный рычаг нужен именно потому, что настоящий разрыв не проявляется
      * отказом какой-нибудь операции: связь просто замолкает.
      */
-    fun signalDisconnect() {
-        if (!disconnected.isCompleted) disconnected.complete(Unit)
+    fun signalDisconnect(reason: String = "разрыв в тесте") {
+        if (!disconnected.isCompleted) disconnected.complete(reason)
     }
 
-    override suspend fun awaitDisconnect() {
-        disconnected.await()
-    }
+    override suspend fun awaitDisconnect(): String = disconnected.await()
 
     override suspend fun close() {
         closed = true

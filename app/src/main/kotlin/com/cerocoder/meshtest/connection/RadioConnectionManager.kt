@@ -164,11 +164,13 @@ class RadioConnectionManager(
         sendToRadio(ToRadio(want_config_id = MeshProtocol.CONFIG_NONCE))
     }
 
-    override fun onDisconnect(isPermanent: Boolean) {
+    override fun onDisconnect(isPermanent: Boolean, reason: String?) {
         watchdog?.cancel()
         keepAlive?.cancel()
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
-        _connectionState.value = ConnectionState.Disconnected(if (isPermanent) "соединение разорвано" else null)
+        _connectionState.value = ConnectionState.Disconnected(
+            reason ?: if (isPermanent) "соединение разорвано" else null,
+        )
         if (isPermanent) {
             // Владелец обязан освободить транспорт: сам он о себе не позаботится,
             // а за швом это будет живое GATT-соединение.

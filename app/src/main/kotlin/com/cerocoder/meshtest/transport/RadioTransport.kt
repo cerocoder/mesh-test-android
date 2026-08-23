@@ -26,8 +26,12 @@ interface RadioTransportCallback {
     /**
      * @param isPermanent true — попытки подключения прекращены (пользователь отключился,
      *   устройство недоступно); false — связь может восстановиться сама.
+     * @param reason человекочитаемая причина для интерфейса, или null, если разрыв
+     *   штатный и объяснять нечего. Транспорт обязан присылать сюда уже пригодный
+     *   к показу текст, а не сообщение исключения: сырой текст исключения на экране
+     *   бесполезен пользователю и утекает подробности реализации.
      */
-    fun onDisconnect(isPermanent: Boolean)
+    fun onDisconnect(isPermanent: Boolean, reason: String? = null)
 
     /** Пришёл закодированный FromRadio. */
     fun onDataReceived(bytes: ByteArray)

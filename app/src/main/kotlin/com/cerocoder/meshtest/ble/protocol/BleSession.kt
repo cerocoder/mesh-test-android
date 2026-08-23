@@ -23,7 +23,7 @@ interface BleSession {
      * завершения сессии. Разрыв обязан приходить событием, а не выясняться по
      * отказу очередной операции.
      */
-    suspend fun awaitDisconnect()
+    suspend fun awaitDisconnect(): String
 
     suspend fun close()
 }

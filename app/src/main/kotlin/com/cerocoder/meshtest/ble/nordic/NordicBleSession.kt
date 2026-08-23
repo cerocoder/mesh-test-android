@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import kotlinx.coroutines.CancellationException
+import com.cerocoder.meshtest.ble.protocol.BleFailure
 import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshGattClient
 
@@ -12,7 +14,7 @@ private class NordicBleSession(private val manager: MeshBleManager) : BleSession
 
     override val client: MeshGattClient = NordicMeshGattClient(manager)
 
-    override suspend fun awaitDisconnect() = manager.awaitDisconnect()
+    override suspend fun awaitDisconnect(): String = manager.awaitDisconnect()
 
     override suspend fun close() = manager.release()
 }
@@ -42,9 +44,14 @@ suspend fun openNordicSession(context: Context, mac: String): BleSession {
     try {
         manager.connectTo(device, autoConnect = wasBonded)
         manager.awaitReady()
-    } catch (e: Throwable) {
+    } catch (e: CancellationException) {
         manager.release()
         throw e
+    } catch (e: Throwable) {
+        manager.release()
+        // Отказ описывается здесь, пока типы Nordic ещё под рукой: выше по стеку
+        // живёт чистый JVM-код, которому знать про них незачем.
+        throw BleFailure(describeBleFailure(e), e)
     }
     return NordicBleSession(manager)
 }
