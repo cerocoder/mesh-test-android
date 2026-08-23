@@ -25,6 +25,7 @@ import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.User
 import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** Фабрика, отдающая фейковый транспорт без задержек. */
@@ -70,8 +71,13 @@ private class SilentTransport(private val callback: RadioTransportCallback) : Ra
 }
 
 private class SilentFactory : RadioTransportFactory {
-    override fun create(address: String, callback: RadioTransportCallback): RadioTransport =
-        SilentTransport(callback)
+    var created = 0
+        private set
+
+    override fun create(address: String, callback: RadioTransportCallback): RadioTransport {
+        created++
+        return SilentTransport(callback)
+    }
 }
 
 /** Транспорт, который завершает handshake и после этого не шлёт ничего. */
@@ -355,6 +361,48 @@ class RadioConnectionManagerTest {
             2,
             created,
         )
+    }
+
+    @Test
+    fun `после срыва handshake менеджер сам поднимает транспорт`() = runTest {
+        val factory = SilentFactory()
+        val manager = RadioConnectionManager(
+            factory = factory,
+            scope = scope(),
+            handshakeTimeout = 30.seconds,
+            recoveryDelay = 5.seconds,
+        )
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceTimeBy(31.seconds)
+        assertEquals("сторожевой таймер обязан закрыть первый транспорт", 1, factory.created)
+
+        advanceTimeBy(6.seconds)
+
+        // Сторожевой таймер закрывает транспорт, а вместе с ним и его собственный
+        // цикл переподключения. Без этой правки приложение стояло бы мёртвым до
+        // тапа пользователя, хотя нода могла просто перезагружаться.
+        assertEquals("менеджер обязан поднять транспорт сам", 2, factory.created)
+    }
+
+    @Test
+    fun `самовосстановление не бесконечно`() = runTest {
+        val factory = SilentFactory()
+        val manager = RadioConnectionManager(
+            factory = factory,
+            scope = scope(),
+            handshakeTimeout = 30.seconds,
+            recoveryDelay = 5.seconds,
+        )
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        // Каждый круг это таймаут плюс пауза, то есть 35 секунд. Пяти минут хватает
+        // на все попытки с большим запасом.
+        advanceTimeBy(5.minutes)
+
+        // Первый транспорт плюс три восстановления: нода, которая подключается, но
+        // не отвечает, сломана всерьёз, и вечный цикл лишь жёг бы батарею.
+        assertEquals("попытки обязаны кончиться", 4, factory.created)
     }
 
     @Test

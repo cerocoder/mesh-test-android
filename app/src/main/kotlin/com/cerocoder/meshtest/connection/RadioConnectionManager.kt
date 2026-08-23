@@ -47,6 +47,7 @@ class RadioConnectionManager(
     // виртуальных часах runTest, и без этого параметра детектор тишины не смог бы
     // отличить настоящую тишину от мгновенного прохода теста.
     private val now: () -> Long = { System.currentTimeMillis() },
+    private val recoveryDelay: Duration = 5.seconds,
 ) : RadioTransportCallback {
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected())
@@ -88,8 +89,21 @@ class RadioConnectionManager(
 
     private val heartbeatNonce = AtomicInteger(0)
 
+    @Volatile
+    private var recovery: Job? = null
+
+    /** Сколько раз подряд менеджер сам поднимал транспорт после собственного отказа. */
+    private var recoveryAttempts = 0
+
     /** Подключиться к устройству по внутреннему адресу. */
-    fun connect(address: String) {
+    fun connect(address: String) = connect(address, byUser = true)
+
+    /**
+     * @param byUser тап пользователя даёт свежий лимит самостоятельных попыток
+     *   восстановления, а сама попытка восстановления — нет, иначе лимит никогда
+     *   бы не исчерпывался и цикл стал бы вечным.
+     */
+    private fun connect(address: String, byUser: Boolean) {
         scope.launch {
             transportMutex.withLock {
                 // Идемпотентность: повторный тап по уже подключённому устройству не
@@ -105,6 +119,8 @@ class RadioConnectionManager(
                 // И heartbeat прошлой сессии — иначе он переживёт транспорт и будет
                 // писать в уже мёртвое соединение.
                 keepAlive?.cancel()
+                recovery?.cancel()
+                if (byUser) recoveryAttempts = 0
                 closeTransportLocked()
                 _packetLog.value = emptyList()
                 // Осушаем канал: иначе кадры прошлой сессии занимают буфер, и новая
@@ -133,6 +149,8 @@ class RadioConnectionManager(
             transportMutex.withLock {
                 watchdog?.cancel()
                 keepAlive?.cancel()
+                recovery?.cancel()
+                recoveryAttempts = 0
                 transport?.let { active ->
                     // Вежливое прощание: даём ноде понять, что разрыв намеренный.
                     active.send(ToRadio(disconnect = true).encode())
@@ -224,6 +242,9 @@ class RadioConnectionManager(
                 watchdog?.cancel()
                 Log.i(TAG, "handshake завершён")
                 _connectionState.value = ConnectionState.Connected
+                // Соединение состоялось — прошлые самостоятельные попытки больше не в
+                // счёт, иначе редкие отказы за день исчерпали бы лимит.
+                recoveryAttempts = 0
                 startKeepAlive()
             }
         }
@@ -256,6 +277,7 @@ class RadioConnectionManager(
                     Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
                     closeTransportLocked()
                     _connectionState.value = ConnectionState.Disconnected("нода не ответила на запрос конфигурации за $handshakeTimeout")
+                    scheduleRecovery()
                 }
             }
         }
@@ -298,6 +320,7 @@ class RadioConnectionManager(
                         closeTransportLocked()
                         _connectionState.value =
                             ConnectionState.Disconnected("нода перестала отвечать")
+                        scheduleRecovery()
                     }
                     return@launch
                 }
@@ -305,8 +328,38 @@ class RadioConnectionManager(
         }
     }
 
+    /**
+     * Поднять транспорт заново после отказа, объявленного самим менеджером.
+     *
+     * Сторожевой таймер handshake и детектор тишины закрывают транспорт, а вместе
+     * с ним умирает и его собственный цикл переподключения: создать транспорт
+     * может только [connect]. Без этого метода приложение после такого отказа
+     * стояло бы мёртвым до тапа пользователя, хотя нода могла просто
+     * перезагружаться.
+     *
+     * Попыток ограниченное число. Нода, которая подключается, но не отвечает на
+     * запрос конфигурации, сломана всерьёз, и бесконечный цикл лишь жёг бы
+     * батарею и прятал причину. Исчерпав попытки, оставляем состояние с причиной
+     * как есть. Счётчик обнуляется успешным handshake и действиями пользователя.
+     */
+    private fun scheduleRecovery() {
+        val address = currentAddress ?: return
+        if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+            Log.w(TAG, "попытки восстановления исчерпаны, ждём действия пользователя")
+            return
+        }
+        recoveryAttempts++
+        recovery?.cancel()
+        recovery = scope.launch {
+            delay(recoveryDelay)
+            Log.i(TAG, "попытка восстановления $recoveryAttempts из $MAX_RECOVERY_ATTEMPTS")
+            connect(address, byUser = false)
+        }
+    }
+
     private companion object {
         const val TAG = "RadioConnectionManager"
+        const val MAX_RECOVERY_ATTEMPTS = 3
         const val PACKET_QUEUE_CAPACITY = 256
         const val PACKET_LOG_LIMIT = 500
     }
