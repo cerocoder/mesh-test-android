@@ -6,12 +6,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 private class RecordingCallback : RadioTransportCallback {
@@ -90,6 +92,39 @@ class BleRadioTransportTest {
         assertEquals("каждая неудача сообщается наверх", 3, callback.disconnects)
 
         transport.close()
+    }
+
+    @Test
+    fun `долгая неудачная попытка не считается стабильным соединением`() = runTest {
+        val callback = RecordingCallback()
+        val attempts = mutableListOf<Long>()
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = {
+                attempts += currentTime
+                // Дольше порога стабильности: ровно так выглядит попытка
+                // подключиться к отсутствующей ноде, обрываемая таймаутом.
+                delay(20.seconds)
+                throw IllegalStateException("нода недоступна")
+            },
+        )
+
+        transport.start()
+        advanceTimeBy(2.minutes)
+        transport.close()
+
+        // Если считать стабильностью длительность попытки, а не время живой связи,
+        // счётчик неудач обнуляется на каждом круге, откат навсегда остаётся
+        // минимальным и телефон стучится к отсутствующей ноде без замедления.
+        val gaps = attempts.zipWithNext { a, b -> b - a }
+        assertTrue("нужно хотя бы три промежутка, было ${attempts.size} попыток", gaps.size >= 3)
+        assertTrue(
+            "промежутки между попытками обязаны расти, а были $gaps",
+            gaps.zipWithNext().all { (earlier, later) -> later > earlier },
+        )
     }
 
     @Test

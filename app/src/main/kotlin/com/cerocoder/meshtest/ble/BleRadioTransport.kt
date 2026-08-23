@@ -40,6 +40,17 @@ class BleRadioTransport(
     @Volatile
     private var profile: MeshRadioProfile? = null
 
+    /**
+     * Момент, когда сессия действительно открылась, или null, если открыть её не
+     * удалось. Отдельное поле нужно потому, что «стабильность» обязана измерять
+     * время living связи, а не длительность попытки: неудачное подключение
+     * занимает пятнадцать секунд по таймауту, то есть больше порога стабильности,
+     * и без этого различия каждая неудача засчитывалась бы за удачное соединение,
+     * обнуляла счётчик и откат не рос бы никогда.
+     */
+    @Volatile
+    private var sessionOpenedAt: Long? = null
+
     override fun start() {
         scope.launch {
             while (isActive) {
@@ -47,10 +58,11 @@ class BleRadioTransport(
                 // освободить свою GATT-сессию, иначе подключение срывается посреди
                 // handshake.
                 delay(policy.settleDelay)
-                val startedAt = now()
+                sessionOpenedAt = null
                 val reason = runSession()
-                val uptime = now() - startedAt
-                val stable = uptime >= policy.minStableConnection.inWholeMilliseconds
+                val openedAt = sessionOpenedAt
+                val stable = openedAt != null &&
+                    now() - openedAt >= policy.minStableConnection.inWholeMilliseconds
                 val failures = policy.onOutcome(wasStable = stable)
                 callback.onDisconnect(isPermanent = false, reason = reason)
                 delay(policy.backoffFor(failures))
@@ -79,6 +91,7 @@ class BleRadioTransport(
         try {
             val radio = MeshRadioProfile(session.client)
             profile = radio
+            sessionOpenedAt = now()
             callback.onConnect()
             coroutineScope {
                 val pump = launch { radio.fromRadio.collect { callback.onDataReceived(it) } }
