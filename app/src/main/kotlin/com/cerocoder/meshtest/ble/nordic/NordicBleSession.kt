@@ -20,29 +20,27 @@ private class NordicBleSession(private val manager: MeshBleManager) : BleSession
 /**
  * Открыть сессию с нодой по MAC-адресу.
  *
- * Порядок: подключение (внутри него библиотека выполняет `initialize` —
- * запрос MTU и запись CCCD), затем `ensureBond`, затем ожидание того, что
- * подписка действительно состоялась.
+ * Порядок жёсткий: спаривание, затем подключение, затем ожидание подписки.
+ * Причина в [ensureBondedBeforeConnect] — прошивке нужен шифрованный канал, и
+ * подключение первым обрекает запись CCCD на отказ.
  *
- * Известный риск, проверяемый вручную на живой ноде: характеристики
- * Meshtastic требуют шифрования, а CCCD пишется до бондинга. Если прошивка
- * отклонит запись, `awaitReady` бросит исключение, сессия закроется, и
- * попытку повторит цикл переподключения — к тому моменту Android обычно уже
- * инициировал бондинг сам. Если ручная приёмка покажет, что первая попытка
- * срывается всегда, бондинг придётся выносить до `connect` через
- * `device.createBond()`.
+ * `autoConnect` берётся по состоянию **до** спаривания. Устройство, которое мы
+ * только что видели в скане и спариваем впервые, имеет свежую рекламу — к нему
+ * подключаются напрямую. Уже спаренное устройство рекламы может и не давать, и
+ * прямое подключение к нему выдаёт статус 133; там нужен терпеливый autoConnect.
  */
 @SuppressLint("MissingPermission")
 suspend fun openNordicSession(context: Context, mac: String): BleSession {
     val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
         ?: error("Bluetooth недоступен на этом устройстве")
     val device: BluetoothDevice = adapter.getRemoteDevice(mac)
-    val bonded = device.bondState == BluetoothDevice.BOND_BONDED
+    val wasBonded = device.bondState == BluetoothDevice.BOND_BONDED
+
+    ensureBondedBeforeConnect(device)
 
     val manager = MeshBleManager(context)
     try {
-        // Спаренному устройству без свежей рекламы нужен терпеливый autoConnect.
-        manager.connectTo(device, autoConnect = bonded)
+        manager.connectTo(device, autoConnect = wasBonded)
         manager.awaitReady()
     } catch (e: Throwable) {
         manager.release()

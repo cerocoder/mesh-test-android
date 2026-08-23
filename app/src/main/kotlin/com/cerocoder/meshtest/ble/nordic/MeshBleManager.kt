@@ -83,6 +83,11 @@ class MeshBleManager(context: Context) : BleManager(context) {
     /**
      * Подключиться к устройству.
      *
+     * Спаривания здесь нет намеренно: оно выполняется до подключения, в
+     * [ensureBondedBeforeConnect]. Вызов `ensureBond()` после `connect()` уже
+     * опоздал бы — запись CCCD происходит внутри самого подключения, в
+     * [initialize], и без шифрованного канала прошивка её отклоняет.
+     *
      * @param autoConnect для спаренного устройства без свежей рекламы обязателен:
      *   прямое подключение на Android часто отваливается со статусом 133, особенно
      *   если нода использует меняющийся адрес.
@@ -93,7 +98,6 @@ class MeshBleManager(context: Context) : BleManager(context) {
             .retry(CONNECT_RETRIES, CONNECT_RETRY_DELAY_MS)
             .timeout(CONNECT_TIMEOUT_MS)
             .suspend()
-        ensureBond().suspend()
     }
 
     /** Приостановиться до фактической записи CCCD. */
