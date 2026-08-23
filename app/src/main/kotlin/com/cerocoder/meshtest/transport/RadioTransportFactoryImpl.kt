@@ -1,5 +1,8 @@
 package com.cerocoder.meshtest.transport
 
+import android.content.Context
+import com.cerocoder.meshtest.ble.BleRadioTransport
+import com.cerocoder.meshtest.ble.nordic.openNordicSession
 import com.cerocoder.meshtest.emulator.Scenarios
 import kotlinx.coroutines.CoroutineScope
 
@@ -12,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 class RadioTransportFactoryImpl(
     private val scope: CoroutineScope,
     private val isDebugBuild: Boolean,
+    private val context: Context,
 ) : RadioTransportFactory {
 
     override fun create(address: String, callback: RadioTransportCallback): RadioTransport {
@@ -24,8 +28,13 @@ class RadioTransportFactoryImpl(
             return FakeRadioTransport(scenario = scenario, callback = callback, parentScope = scope)
         }
 
-        MeshProtocol.bleMacOrNull(address)?.let {
-            error("BLE-транспорт появится на этапе 2")
+        MeshProtocol.bleMacOrNull(address)?.let { mac ->
+            return BleRadioTransport(
+                mac = mac,
+                callback = callback,
+                parentScope = scope,
+                openSession = { address -> openNordicSession(context, address) },
+            )
         }
 
         error("неизвестный формат адреса: $address")

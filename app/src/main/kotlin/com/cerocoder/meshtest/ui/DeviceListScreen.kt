@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.cerocoder.meshtest.ble.BleReadiness
 import com.cerocoder.meshtest.connection.ConnectionState
 import com.cerocoder.meshtest.transport.DeviceListEntry
 
@@ -22,6 +23,7 @@ import com.cerocoder.meshtest.transport.DeviceListEntry
 fun DeviceListScreen(
     devices: List<DeviceListEntry>,
     state: ConnectionState,
+    readiness: BleReadiness,
     onSelect: (DeviceListEntry) -> Unit,
     onDisconnect: () -> Unit,
     onOpenLog: () -> Unit,
@@ -37,13 +39,14 @@ fun DeviceListScreen(
             Text("Отключиться")
         }
 
-        if (devices.isEmpty()) {
-            Text(
-                "Устройств нет. Демо-устройства доступны только в debug-сборке, " +
-                    "BLE-сканирование появится на этапе 2.",
-                modifier = Modifier.padding(top = 16.dp),
-            )
-            return@Column
+        val explanation = when (readiness) {
+            BleReadiness.PERMISSIONS_MISSING -> "Нет разрешений Bluetooth — выдайте их, чтобы искать ноды."
+            BleReadiness.ADAPTER_OFF -> "Bluetooth выключен — включите его, чтобы искать ноды."
+            BleReadiness.UNSUPPORTED -> "Это устройство не поддерживает Bluetooth LE."
+            BleReadiness.READY -> if (devices.isEmpty()) "Ноды поблизости не найдены. Поиск продолжается." else null
+        }
+        if (explanation != null) {
+            Text(explanation, modifier = Modifier.padding(top = 16.dp))
         }
 
         LazyColumn(modifier = Modifier.padding(top = 16.dp)) {

@@ -1,6 +1,10 @@
 package com.cerocoder.meshtest
 
+import android.content.Context
 import android.util.Log
+import com.cerocoder.meshtest.ble.BleScanner
+import com.cerocoder.meshtest.ble.BluetoothAvailability
+import com.cerocoder.meshtest.ble.nordic.BleScannerImpl
 import com.cerocoder.meshtest.connection.RadioConnectionManager
 import com.cerocoder.meshtest.emulator.Scenarios
 import com.cerocoder.meshtest.transport.DeviceListEntry
@@ -16,7 +20,10 @@ import kotlinx.coroutines.SupervisorJob
  *
  * Живёт столько же, сколько процесс: соединение переживает пересоздание Activity.
  */
-class AppContainer(isDebugBuild: Boolean) {
+class AppContainer(
+    private val context: Context,
+    isDebugBuild: Boolean,
+) {
 
     private val errors = CoroutineExceptionHandler { _, e ->
         Log.e("AppContainer", "необработанное исключение в области приложения", e)
@@ -24,11 +31,18 @@ class AppContainer(isDebugBuild: Boolean) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errors)
 
-    private val factory: RadioTransportFactory = RadioTransportFactoryImpl(scope, isDebugBuild)
+    /** Состояние разрешений и адаптера — для экрана устройств. */
+    val availability = BluetoothAvailability(context)
+
+    /** Поиск нод в эфире. */
+    val scanner: BleScanner = BleScannerImpl(context)
+
+    private val factory: RadioTransportFactory =
+        RadioTransportFactoryImpl(scope, isDebugBuild, context)
 
     val connectionManager = RadioConnectionManager(factory, scope)
 
-    /** В release демо-устройств нет, а BLE-сканирование появится на этапе 2. */
+    /** Демо-устройства только в debug; реальные приходят из сканера. */
     val devices: List<DeviceListEntry> =
         if (isDebugBuild) {
             Scenarios.all.map { DeviceListEntry.Demo(it.id, it.displayName) }

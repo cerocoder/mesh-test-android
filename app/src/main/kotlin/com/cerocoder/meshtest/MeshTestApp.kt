@@ -9,6 +9,6 @@ class MeshTestApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(isDebugBuild = BuildConfig.DEBUG)
+        container = AppContainer(applicationContext, BuildConfig.DEBUG)
     }
 }
