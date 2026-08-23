@@ -89,6 +89,10 @@ class RadioConnectionManager(
 
     private val heartbeatNonce = AtomicInteger(0)
 
+    /** Номер экземпляра heartbeat. Нужен только для разбора логов: по нему видно,
+     *  тикает ли таймер той сессии, которая уже закрыта. */
+    private val keepAliveSeq = AtomicInteger(0)
+
     @Volatile
     private var recovery: Job? = null
 
@@ -145,6 +149,7 @@ class RadioConnectionManager(
 
     /** Отключиться и освободить транспорт. */
     suspend fun disconnect() {
+        Log.i(TAG, "отключение по запросу пользователя")
         withContext(NonCancellable) {
             transportMutex.withLock {
                 watchdog?.cancel()
@@ -298,9 +303,12 @@ class RadioConnectionManager(
     private fun startKeepAlive() {
         keepAlive?.cancel()
         lastFrameAt = now()
+        val id = keepAliveSeq.incrementAndGet()
+        Log.i(TAG, "heartbeat #$id запущен")
         keepAlive = scope.launch {
             while (isActive) {
                 delay(heartbeatInterval)
+                Log.d(TAG, "heartbeat #$id тик")
                 sendToRadio(ToRadio(heartbeat = Heartbeat(nonce = heartbeatNonce.incrementAndGet())))
                 val silence = now() - lastFrameAt
                 if (silence > silenceTimeout.inWholeMilliseconds) {
@@ -326,6 +334,10 @@ class RadioConnectionManager(
                 }
             }
         }
+        // Завершение отмечаем снаружи корутины: так в лог попадает и отмена, а не
+        // только штатный выход. Именно это и нужно, чтобы увидеть таймер, который
+        // пережил свою сессию.
+        keepAlive?.invokeOnCompletion { Log.i(TAG, "heartbeat #$id завершён") }
     }
 
     /**
