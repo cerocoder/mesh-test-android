@@ -17,11 +17,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.Heartbeat
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
@@ -39,6 +41,12 @@ class RadioConnectionManager(
     private val factory: RadioTransportFactory,
     private val scope: CoroutineScope,
     private val handshakeTimeout: Duration = 30.seconds,
+    private val heartbeatInterval: Duration = 30.seconds,
+    private val silenceTimeout: Duration = 60.seconds,
+    // Источник времени вынесен из System.currentTimeMillis(): тесты идут на
+    // виртуальных часах runTest, и без этого параметра детектор тишины не смог бы
+    // отличить настоящую тишину от мгновенного прохода теста.
+    private val now: () -> Long = { System.currentTimeMillis() },
 ) : RadioTransportCallback {
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected())
@@ -66,6 +74,12 @@ class RadioConnectionManager(
     @Volatile
     private var currentAddress: String? = null
     private var watchdog: Job? = null
+    private var keepAlive: Job? = null
+
+    @Volatile
+    private var lastFrameAt: Long = 0
+
+    private val heartbeatNonce = AtomicInteger(0)
 
     /** Подключиться к устройству по внутреннему адресу. */
     fun connect(address: String) {
@@ -81,6 +95,9 @@ class RadioConnectionManager(
                 // Снимаем сторожевой таймер прошлой сессии: иначе он может сработать уже по
                 // новому транспорту и оборвать здоровое соединение.
                 watchdog?.cancel()
+                // И heartbeat прошлой сессии — иначе он переживёт транспорт и будет
+                // писать в уже мёртвое соединение.
+                keepAlive?.cancel()
                 closeTransportLocked()
                 _packetLog.value = emptyList()
                 // Осушаем канал: иначе кадры прошлой сессии занимают буфер, и новая
@@ -108,6 +125,7 @@ class RadioConnectionManager(
         withContext(NonCancellable) {
             transportMutex.withLock {
                 watchdog?.cancel()
+                keepAlive?.cancel()
                 transport?.let { active ->
                     // Вежливое прощание: даём ноде понять, что разрыв намеренный.
                     active.send(ToRadio(disconnect = true).encode())
@@ -141,6 +159,7 @@ class RadioConnectionManager(
 
     override fun onDisconnect(isPermanent: Boolean) {
         watchdog?.cancel()
+        keepAlive?.cancel()
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
         _connectionState.value = ConnectionState.Disconnected(if (isPermanent) "соединение разорвано" else null)
         if (isPermanent) {
@@ -173,6 +192,9 @@ class RadioConnectionManager(
             Log.w(TAG, "кадр ${bytes.size} байт превышает лимит ${MeshProtocol.MAX_FRAME_BYTES}, отброшен")
             return
         }
+        // Признак жизни канала — сами байты с провода, а не то, разберутся ли они
+        // в валидный FromRadio: битый кадр всё равно доказывает, что линк не молчит.
+        lastFrameAt = now()
 
         val frame = try {
             FromRadio.ADAPTER.decode(bytes)
@@ -193,6 +215,7 @@ class RadioConnectionManager(
                 watchdog?.cancel()
                 Log.i(TAG, "handshake завершён")
                 _connectionState.value = ConnectionState.Connected
+                startKeepAlive()
             }
         }
 
@@ -224,6 +247,42 @@ class RadioConnectionManager(
                     Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
                     closeTransportLocked()
                     _connectionState.value = ConnectionState.Disconnected("нода не ответила на запрос конфигурации за $handshakeTimeout")
+                }
+            }
+        }
+    }
+
+    /**
+     * Поддержание связи и обнаружение «зомби»-сессии.
+     *
+     * Прошивка держит собственный таймер простоя и рвёт связь, если приложение
+     * молчит (спека §7) — heartbeat закрывает эту сторону. Обратная сторона —
+     * детектор тишины: если за [silenceTimeout] с провода не пришло ни одного
+     * кадра (в том числе ответа на сам heartbeat), считаем стек Android
+     * зависшим и рвём сессию сами, не дожидаясь колбэка от транспорта.
+     *
+     * Нонс обязан расти: у прошивки есть фильтр повторов на одинаковые записи,
+     * и одинаковые байты она молча отбросит, а мы решим, что связь жива.
+     */
+    private fun startKeepAlive() {
+        keepAlive?.cancel()
+        lastFrameAt = now()
+        keepAlive = scope.launch {
+            while (isActive) {
+                delay(heartbeatInterval)
+                sendToRadio(ToRadio(heartbeat = Heartbeat(nonce = heartbeatNonce.incrementAndGet())))
+                val silence = now() - lastFrameAt
+                if (silence > silenceTimeout.inWholeMilliseconds) {
+                    Log.w(TAG, "нет кадров $silence мс — считаем сессию мёртвой")
+                    // Закрываем транспорт сами, как это делает сторожевой таймер
+                    // handshake. Одного лишь перевода состояния в Disconnected мало:
+                    // зомби-сессия тем и опасна, что снизу о разрыве никто не
+                    // сообщит, и брошенное GATT-соединение продолжило бы висеть до
+                    // следующей попытки подключения.
+                    transportMutex.withLock { closeTransportLocked() }
+                    _connectionState.value =
+                        ConnectionState.Disconnected("нода перестала отвечать")
+                    return@launch
                 }
             }
         }

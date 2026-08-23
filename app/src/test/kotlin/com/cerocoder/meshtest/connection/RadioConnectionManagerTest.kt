@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -73,9 +74,57 @@ private class SilentFactory : RadioTransportFactory {
         SilentTransport(callback)
 }
 
+/** Транспорт, который завершает handshake и после этого не шлёт ничего. */
+private class SilentAfterConnectTransport(private val callback: RadioTransportCallback) : RadioTransport {
+    override fun start() {
+        callback.onConnect()
+    }
+
+    override fun send(bytes: ByteArray) {
+        val message = ToRadio.ADAPTER.decode(bytes)
+        when (message.want_config_id) {
+            MeshProtocol.CONFIG_NONCE ->
+                callback.onDataReceived(FromRadio(config_complete_id = MeshProtocol.CONFIG_NONCE).encode())
+
+            MeshProtocol.NODE_INFO_NONCE ->
+                callback.onDataReceived(FromRadio(config_complete_id = MeshProtocol.NODE_INFO_NONCE).encode())
+        }
+        // На heartbeat намеренно не отвечаем — именно так выглядит зомби-сессия:
+        // физическая связь есть (транспорт не сообщал о разрыве), а данных больше нет.
+    }
+
+    var closed = false
+        private set
+
+    override suspend fun close() {
+        closed = true
+    }
+}
+
+private class SilentAfterConnectFactory : RadioTransportFactory {
+    lateinit var last: SilentAfterConnectTransport
+        private set
+
+    override fun create(address: String, callback: RadioTransportCallback): RadioTransport =
+        SilentAfterConnectTransport(callback).also { last = it }
+}
+
 class RadioConnectionManagerTest {
 
-    private fun TestScope.scope(): CoroutineScope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+    // scope() строится поверх backgroundScope, а не голого CoroutineScope(UnconfinedTestDispatcher(...)):
+    // keepAlive из task-9 — это НАСТОЯЩИЙ бесконечный while(isActive) { delay(...) }, который сам себя
+    // перепланирует, пока соединение живо. advanceUntilIdle() у kotlinx-coroutines-test 1.11.0 крутит
+    // время вперёд, пока в очереди остаётся хоть одна foreground-задача, и останавливается, только когда
+    // таких не осталось. Обычный (foreground) scope держит heartbeat вечно занятым в очереди — здоровое
+    // соединение (FakeRadioTransport отвечает на каждый heartbeat) значит, что advanceUntilIdle() после
+    // подключения никогда не увидит пустую очередь и зависнет навсегда, обрывая ВСЕ тесты, где handshake
+    // доходит до Connected, а не только новые. Проверено эмпирически прогоном мини-репродукции на этой же
+    // версии библиотеки: с обычным scope() advanceUntilIdle() зависает намертво; с задачами, помеченными
+    // background (унаследовано от backgroundScope.coroutineContext), advanceUntilIdle() корректно
+    // завершается, а advanceTimeBy(...) по-прежнему прокручивает background-задачи в своём окне — именно
+    // поэтому все существующие тесты, использующие advanceTimeBy для таймаутов, не меняют поведение.
+    private fun TestScope.scope(): CoroutineScope =
+        CoroutineScope(backgroundScope.coroutineContext + UnconfinedTestDispatcher(testScheduler))
 
     @Test
     fun `изначально соединение отсутствует`() = runTest {
@@ -306,5 +355,57 @@ class RadioConnectionManagerTest {
             2,
             created,
         )
+    }
+
+    @Test
+    fun `после подключения heartbeat уходит по расписанию`() = runTest {
+        val factory = TestFactory(scope())
+        val manager = RadioConnectionManager(factory, scope())
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+        val before = manager.packetLog.value.count { it.queueStatus != null }
+
+        advanceTimeBy(31.seconds)
+        advanceUntilIdle()
+
+        assertTrue(
+            "нода отвечает на heartbeat статусом очереди — значит он был отправлен",
+            manager.packetLog.value.count { it.queueStatus != null } > before,
+        )
+    }
+
+    @Test
+    fun `молчание дольше таймаута разрывает зомби-сессию`() = runTest {
+        // now = { currentTime }: без виртуальных часов TestScope детектор тишины
+        // сравнивал бы System.currentTimeMillis() (реальное время, которое за время
+        // прогона теста почти не сдвигается) с ним же самим — тест прошёл бы
+        // даже без работающего детектора, ничего не проверив.
+        val factory = SilentAfterConnectFactory()
+        val manager = RadioConnectionManager(
+            factory = factory,
+            scope = scope(),
+            silenceTimeout = 60.seconds,
+            now = { currentTime },
+        )
+
+        manager.connect("m:${Scenarios.FIVE_NODES_ID}")
+        advanceUntilIdle()
+        // Тишина проверяется только В МОМЕНТ отправки очередного heartbeat, а не
+        // непрерывно, и сравнение строгое (>). При heartbeatInterval=30s и
+        // silenceTimeout=60s пороговое условие впервые выполняется на ТРЕТЬЕМ
+        // heartbeat: t=30s (тишина 30s, не больше 60s), t=60s (тишина ровно 60s,
+        // не больше — строгое неравенство не пропускает), t=90s (тишина 90s,
+        // больше 60s — разрыв). 91 секунда гарантированно захватывает этот тик.
+        advanceTimeBy(91.seconds)
+        advanceUntilIdle()
+
+        assertTrue(
+            "при тишине связь считается мёртвой, даже если стек молчит о разрыве",
+            manager.connectionState.value is ConnectionState.Disconnected,
+        )
+        // Одного состояния мало: зомби-сессия тем и опасна, что снизу о разрыве
+        // никто не сообщит, и незакрытый транспорт остался бы висеть.
+        assertTrue("транспорт зомби-сессии обязан быть закрыт", factory.last.closed)
     }
 }
