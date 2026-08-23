@@ -5,6 +5,7 @@ import com.cerocoder.meshtest.transport.MeshProtocol
 import com.cerocoder.meshtest.transport.RadioTransport
 import com.cerocoder.meshtest.transport.RadioTransportCallback
 import com.cerocoder.meshtest.transport.RadioTransportFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -95,7 +96,8 @@ class RadioConnectionManager(
                 } catch (e: Throwable) {
                     Log.w(TAG, "не удалось создать транспорт для адреса", e)
                     transport = null
-                    _connectionState.value = ConnectionState.Disconnected("не удалось создать транспорт: ${e.message}")
+                    _connectionState.value =
+                        ConnectionState.Disconnected("не удалось подключиться к устройству")
                 }
             }
         }
@@ -121,6 +123,8 @@ class RadioConnectionManager(
         transport?.let { active ->
             try {
                 active.close()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Log.w(TAG, "ошибка при закрытии транспорта", e)
             }
@@ -142,10 +146,23 @@ class RadioConnectionManager(
         if (isPermanent) {
             // Владелец обязан освободить транспорт: сам он о себе не позаботится,
             // а за швом это будет живое GATT-соединение.
+            // Запоминаем именно ту сессию, о смерти которой сообщили: пока корутина
+            // ждёт замок, пользователь может успеть подключиться заново, и без этой
+            // проверки мы снесли бы уже живое новое соединение.
+            val doomed = transport ?: return
             scope.launch {
                 transportMutex.withLock {
-                    closeTransportLocked()
-                    currentAddress = null
+                    try {
+                        doomed.close()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "ошибка при закрытии оборванного транспорта", e)
+                    }
+                    if (transport === doomed) {
+                        transport = null
+                        currentAddress = null
+                    }
                 }
             }
         }
