@@ -112,6 +112,40 @@ class BleRadioTransportTest {
     }
 
     @Test
+    fun `молчаливый разрыв завершает сессию и запускает новую`() = runTest {
+        val callback = RecordingCallback()
+        val sessions = mutableListOf<FakeBleSession>()
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = {
+                FakeBleSession().also {
+                    it.client.markSubscriptionReady()
+                    sessions += it
+                }
+            },
+        )
+
+        transport.start()
+        advanceTimeBy(4.seconds)
+        assertEquals("первая сессия обязана открыться", 1, sessions.size)
+
+        // Связь умирает молча: ни одна операция не падает, кадры просто перестают
+        // приходить. Ровно так выглядит ушедшая из зоны нода — и ровно этот случай
+        // раньше вешал цикл переподключения навсегда, потому что завершения сессии
+        // никто не дожидался.
+        sessions[0].signalDisconnect()
+        advanceTimeBy(30.seconds)
+
+        assertTrue("после разрыва обязана открыться новая сессия", sessions.size >= 2)
+        assertTrue("сессия разорванной связи обязана быть закрыта", sessions[0].closed)
+
+        transport.close()
+    }
+
+    @Test
     fun `после close переподключение прекращается`() = runTest {
         val callback = RecordingCallback()
         var attempts = 0

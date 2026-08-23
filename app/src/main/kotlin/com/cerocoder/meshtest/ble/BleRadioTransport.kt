@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -71,7 +72,20 @@ class BleRadioTransport(
             val radio = MeshRadioProfile(session.client)
             profile = radio
             callback.onConnect()
-            radio.fromRadio.collect { callback.onDataReceived(it) }
+            coroutineScope {
+                val pump = launch { radio.fromRadio.collect { callback.onDataReceived(it) } }
+                // Насос кадров сам по себе бесконечен: он ждёт триггеров, а у
+                // мёртвой ноды триггеров не бывает. Сессию завершает либо
+                // фатальная ошибка чтения, либо сообщение стека о разрыве —
+                // второе и есть единственный сигнал, когда связь умирает в тишине.
+                val watcher = launch {
+                    session.awaitDisconnect()
+                    Log.i(TAG, "стек сообщил о разрыве, завершаем сессию")
+                    pump.cancel()
+                }
+                pump.join()
+                watcher.cancel()
+            }
         } catch (e: CancellationException) {
             // Отмена — это наш собственный close(), а не разрыв связи. Проглотив
             // её, мы вернулись бы в цикл и успели бы записать неудачу в политику и

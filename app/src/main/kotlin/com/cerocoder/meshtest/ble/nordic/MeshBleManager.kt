@@ -8,9 +8,12 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import no.nordicsemi.android.ble.BleManager
 import no.nordicsemi.android.ble.ktx.asFlow
+import no.nordicsemi.android.ble.ktx.state.ConnectionState
+import no.nordicsemi.android.ble.ktx.stateAsFlow
 import no.nordicsemi.android.ble.ktx.suspend
 import java.util.UUID
 
@@ -96,6 +99,18 @@ class MeshBleManager(context: Context) : BleManager(context) {
     /** Приостановиться до фактической записи CCCD. */
     suspend fun awaitReady() {
         subscriptionReady.await()
+    }
+
+    /**
+     * Приостановиться до разрыва связи.
+     *
+     * `stateAsFlow()` — горячий поток с `replay = 1`, поэтому если связь успела
+     * оборваться до подписки, текущее состояние придёт немедленно и ждать не
+     * придётся. Наблюдателя подключений больше никто не ставит: библиотека
+     * позволяет только одного и бросает при попытке поставить второго.
+     */
+    suspend fun awaitDisconnect() {
+        stateAsFlow().first { it is ConnectionState.Disconnected }
     }
 
     suspend fun read(): ByteArray = readCharacteristic(fromRadio).suspend().value ?: ByteArray(0)

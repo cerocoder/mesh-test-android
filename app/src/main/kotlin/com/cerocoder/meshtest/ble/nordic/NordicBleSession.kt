@@ -12,6 +12,8 @@ private class NordicBleSession(private val manager: MeshBleManager) : BleSession
 
     override val client: MeshGattClient = NordicMeshGattClient(manager)
 
+    override suspend fun awaitDisconnect() = manager.awaitDisconnect()
+
     override suspend fun close() = manager.release()
 }
 
