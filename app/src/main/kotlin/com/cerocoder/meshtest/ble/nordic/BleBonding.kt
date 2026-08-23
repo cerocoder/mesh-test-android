@@ -68,6 +68,13 @@ suspend fun ensureBondedBeforeConnect(device: BluetoothDevice) {
 }
 
 private const val TAG = "BleBonding"
-private const val BOND_TIMEOUT_MS = 30_000L
+/**
+ * Лимит на спаривание. Это единственный таймаут в проекте, который отмеряет не
+ * работу машины, а действие человека: увидеть диалог, прочитать код с экрана
+ * ноды, перевести взгляд обратно и набрать его. Тридцати секунд на живой
+ * приёмке не хватило — спаривание сорвалось на первом же круге, и повторный
+ * диалог появился только потому, что сработал цикл переподключения.
+ */
+private const val BOND_TIMEOUT_MS = 120_000L
 private const val BOND_POLL_INTERVAL_MS = 500L
 private const val BOND_NONE_GRACE_POLLS = 2
