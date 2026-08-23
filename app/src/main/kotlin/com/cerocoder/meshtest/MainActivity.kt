@@ -21,7 +21,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.cerocoder.meshtest.ble.BleReadiness
-import com.cerocoder.meshtest.connection.ConnectionState
 import com.cerocoder.meshtest.service.MeshForegroundService
 import com.cerocoder.meshtest.transport.DeviceListEntry
 import com.cerocoder.meshtest.ui.DeviceListScreen
@@ -76,19 +75,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Сервис поднимается уже на стадии подключения, а не после её
-                    // завершения: handshake занимает секунды, и всё это время процесс
-                    // должен быть защищён от усыпления.
-                    LaunchedEffect(state) {
-                        when (state) {
-                            ConnectionState.Connecting,
-                            ConnectionState.Connected,
-                            -> MeshForegroundService.start(context)
-
-                            is ConnectionState.Disconnected -> MeshForegroundService.stop(context)
-                        }
-                    }
-
                     LaunchedEffect(readiness) {
                         when (readiness) {
                             BleReadiness.PERMISSIONS_MISSING ->
@@ -112,8 +98,28 @@ class MainActivity : ComponentActivity() {
                             devices = allDevices,
                             state = state,
                             readiness = readiness,
-                            onSelect = { device -> container.connectionManager.connect(device.address) },
-                            onDisconnect = { scope.launch { container.connectionManager.disconnect() } },
+                            onSelect = { device ->
+                                // Сервис привязан к намерению пользователя быть на связи,
+                                // а не к текущему состоянию соединения. Причин две.
+                                // Первая: startForegroundService из фона на Android 12+
+                                // бросает ForegroundServiceStartNotAllowedException, а
+                                // BleRadioTransport переподключается сам, своим циклом, и
+                                // проводит состояние через Connecting когда угодно — в том
+                                // числе пока приложение свёрнуто. Запуск отсюда, из тапа
+                                // пользователя, всегда происходит на переднем плане.
+                                // Вторая: каждая неудачная попытка внутри цикла проводит
+                                // состояние через Disconnected, и привязка к состоянию
+                                // гасила бы сервис ровно на время отката — то есть именно
+                                // тогда, когда защита процесса и нужна.
+                                MeshForegroundService.start(context)
+                                container.connectionManager.connect(device.address)
+                            },
+                            onDisconnect = {
+                                scope.launch {
+                                    container.connectionManager.disconnect()
+                                    MeshForegroundService.stop(context)
+                                }
+                            },
                             onOpenLog = { showLog = true },
                         )
                     }

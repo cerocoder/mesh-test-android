@@ -279,9 +279,17 @@ class RadioConnectionManager(
                     // зомби-сессия тем и опасна, что снизу о разрыве никто не
                     // сообщит, и брошенное GATT-соединение продолжило бы висеть до
                     // следующей попытки подключения.
-                    transportMutex.withLock { closeTransportLocked() }
-                    _connectionState.value =
-                        ConnectionState.Disconnected("нода перестала отвечать")
+                    // Закрытие и смена состояния — под одним замком, как в
+                    // сторожевом таймере handshake. Если выставить состояние после
+                    // освобождения замка, откроется окно, где транспорта уже нет, а
+                    // connectionState всё ещё Connected: попавший в это окно connect()
+                    // сработает по гейту идемпотентности вхолостую, и приложение
+                    // останется без транспорта и без единой попытки переподключиться.
+                    transportMutex.withLock {
+                        closeTransportLocked()
+                        _connectionState.value =
+                            ConnectionState.Disconnected("нода перестала отвечать")
+                    }
                     return@launch
                 }
             }
