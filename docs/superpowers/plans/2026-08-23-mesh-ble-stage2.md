@@ -1166,7 +1166,7 @@ git commit -m "feat: сканер нод Meshtastic с аппаратным фи
 
 **Interfaces:**
 - Consumes: `RadioTransport`, `RadioTransportCallback` (этап 1); `BleSession`, `MeshGattClient` (Task 3); `MeshRadioProfile` (Task 4); `ReconnectPolicy` (Task 5); `openNordicSession` (Task 6); `BleScanner` (Task 7); `BluetoothAvailability` (Task 2).
-- Produces: `class BleRadioTransport(mac: String, callback: RadioTransportCallback, context: Context, parentScope: CoroutineScope) : RadioTransport`; в `AppContainer` — `val scanner: BleScanner`, `val availability: BluetoothAvailability`.
+- Produces: `class BleRadioTransport(mac: String, callback: RadioTransportCallback, parentScope: CoroutineScope, policy: ReconnectPolicy = ReconnectPolicy(), now: () -> Long = { System.currentTimeMillis() }, openSession: suspend (mac: String) -> BleSession) : RadioTransport` — открытие сессии передаётся снаружи, ради проверяемости цикла переподключения; в `AppContainer` — `val scanner: BleScanner`, `val availability: BluetoothAvailability`.
 
 - [ ] **Step 1: Написать падающие тесты цикла подключения**
 
