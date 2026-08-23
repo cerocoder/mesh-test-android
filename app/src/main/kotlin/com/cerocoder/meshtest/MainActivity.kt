@@ -26,9 +26,24 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * Готовность Bluetooth. Живёт на уровне активности, а не композиции, потому
+     * что перечитывать её нужно при каждом возврате на экран: разрешение выдают
+     * в системных настройках, а адаптер включают шторкой — оба события
+     * происходят вне приложения. Без этого один отказ в диалоге запирал
+     * пользователя на пояснительном тексте до перезапуска процесса.
+     */
+    private val readinessState = mutableStateOf(BleReadiness.UNSUPPORTED)
+
+    override fun onResume() {
+        super.onResume()
+        readinessState.value = (application as MeshTestApp).container.availability.check()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as MeshTestApp).container
+        readinessState.value = container.availability.check()
 
         setContent {
             MaterialTheme {
@@ -40,7 +55,7 @@ class MainActivity : ComponentActivity() {
 
                     val context = LocalContext.current
                     val found = remember { mutableStateMapOf<String, DeviceListEntry.Ble>() }
-                    var readiness by remember { mutableStateOf(container.availability.check()) }
+                    var readiness by readinessState
 
                     val permissionLauncher = rememberLauncherForActivityResult(
                         ActivityResultContracts.RequestMultiplePermissions(),
