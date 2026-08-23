@@ -16,7 +16,19 @@ sealed interface ConnectionState {
      *   пользователя: таймаут handshake, отказ в разрешении, выключенный адаптер.
      *   `null` означает намеренное отключение и не показывается как ошибка.
      */
-    data class Disconnected(val reason: String? = null) : ConnectionState
+    data class Disconnected(
+        val reason: String? = null,
+        /**
+         * Продолжаются ли попытки восстановить связь.
+         *
+         * Без этого признака «отключено с причиной» означает и обычную неудачную
+         * попытку внутри цикла, и окончательную сдачу — а решения у них разные.
+         * По нему, в частности, гасится foreground-сервис: держать процесс живым
+         * во время откатов между попытками нужно, а после сдачи — незачем, и
+         * уведомление о соединении тогда лгало бы.
+         */
+        val retrying: Boolean = false,
+    ) : ConnectionState
 
     data object Connecting : ConnectionState
 

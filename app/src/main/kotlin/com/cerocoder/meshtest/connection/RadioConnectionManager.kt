@@ -193,6 +193,9 @@ class RadioConnectionManager(
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
         _connectionState.value = ConnectionState.Disconnected(
             reason ?: if (isPermanent) "соединение разорвано" else null,
+            // Непостоянный разрыв — это как раз очередной круг цикла переподключения
+            // внутри транспорта, и он продолжится сам.
+            retrying = !isPermanent,
         )
         if (isPermanent) {
             // Владелец обязан освободить транспорт: сам он о себе не позаботится,
@@ -281,8 +284,11 @@ class RadioConnectionManager(
                 if (_connectionState.value == ConnectionState.Connecting) {
                     Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
                     closeTransportLocked()
-                    _connectionState.value = ConnectionState.Disconnected("нода не ответила на запрос конфигурации за $handshakeTimeout")
-                    scheduleRecovery()
+                    val willRetry = scheduleRecovery()
+                    _connectionState.value = ConnectionState.Disconnected(
+                        "нода не ответила на запрос конфигурации за $handshakeTimeout",
+                        retrying = willRetry,
+                    )
                 }
             }
         }
@@ -326,9 +332,11 @@ class RadioConnectionManager(
                     // останется без транспорта и без единой попытки переподключиться.
                     transportMutex.withLock {
                         closeTransportLocked()
-                        _connectionState.value =
-                            ConnectionState.Disconnected("нода перестала отвечать")
-                        scheduleRecovery()
+                        val willRetry = scheduleRecovery()
+                        _connectionState.value = ConnectionState.Disconnected(
+                            "нода перестала отвечать",
+                            retrying = willRetry,
+                        )
                     }
                     return@launch
                 }
@@ -354,11 +362,11 @@ class RadioConnectionManager(
      * батарею и прятал причину. Исчерпав попытки, оставляем состояние с причиной
      * как есть. Счётчик обнуляется успешным handshake и действиями пользователя.
      */
-    private fun scheduleRecovery() {
-        val address = currentAddress ?: return
+    private fun scheduleRecovery(): Boolean {
+        val address = currentAddress ?: return false
         if (recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
             Log.w(TAG, "попытки восстановления исчерпаны, ждём действия пользователя")
-            return
+            return false
         }
         recoveryAttempts++
         recovery?.cancel()
@@ -367,6 +375,7 @@ class RadioConnectionManager(
             Log.i(TAG, "попытка восстановления $recoveryAttempts из $MAX_RECOVERY_ATTEMPTS")
             connect(address, byUser = false)
         }
+        return true
     }
 
     private companion object {

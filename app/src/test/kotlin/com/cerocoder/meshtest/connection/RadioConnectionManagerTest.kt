@@ -403,6 +403,30 @@ class RadioConnectionManagerTest {
         // Первый транспорт плюс три восстановления: нода, которая подключается, но
         // не отвечает, сломана всерьёз, и вечный цикл лишь жёг бы батарею.
         assertEquals("попытки обязаны кончиться", 4, factory.created)
+
+        // По этому признаку интерфейс гасит foreground-сервис. Пока попытки идут,
+        // процесс обязан оставаться защищённым; после сдачи держать его незачем, а
+        // уведомление о соединении лгало бы.
+        val state = manager.connectionState.value
+        assertTrue("состояние должно быть Disconnected, а было $state", state is ConnectionState.Disconnected)
+        assertEquals(
+            "после исчерпания попыток признак повторов обязан погаснуть",
+            false,
+            (state as ConnectionState.Disconnected).retrying,
+        )
+    }
+
+    @Test
+    fun `непостоянный разрыв помечается как продолжающиеся попытки`() {
+        val manager = RadioConnectionManager(SilentFactory(), CoroutineScope(UnconfinedTestDispatcher()))
+
+        // Ровно то, что присылает транспорт на каждом круге своего цикла: связь
+        // потеряна, но он продолжает пытаться сам.
+        manager.onDisconnect(isPermanent = false, reason = "нода вне зоны действия")
+
+        val state = manager.connectionState.value as ConnectionState.Disconnected
+        assertEquals("нода вне зоны действия", state.reason)
+        assertEquals("сервис не должен гаснуть, пока транспорт пытается", true, state.retrying)
     }
 
     @Test
