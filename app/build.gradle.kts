@@ -18,6 +18,13 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Подписываем release отладочным ключом. Это личное приложение для
+            // работы со своей нодой, оно не публикуется, а без подписи
+            // assembleRelease выдаёт app-release-unsigned.apk, который Android
+            // просто откажется устанавливать — то есть проверить release-вариант
+            // на телефоне было бы нечем. Если приложение когда-нибудь пойдёт
+            // дальше своего телефона, здесь нужен настоящий ключ из секретов CI.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
