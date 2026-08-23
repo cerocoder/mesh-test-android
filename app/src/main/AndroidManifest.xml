@@ -17,6 +17,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
+    <!-- Начиная с Android 13 без этого разрешения уведомление foreground-сервиса
+         просто не показывается: сам сервис работает, но пользователь не видит,
+         что соединение живо, и не может вернуться в приложение из шторки. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="true"
         android:label="Mesh Test"
@@ -32,5 +37,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".service.MeshForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

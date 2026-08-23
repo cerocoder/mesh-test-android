@@ -1,5 +1,7 @@
 package com.cerocoder.meshtest
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -19,6 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.cerocoder.meshtest.ble.BleReadiness
+import com.cerocoder.meshtest.connection.ConnectionState
+import com.cerocoder.meshtest.service.MeshForegroundService
 import com.cerocoder.meshtest.transport.DeviceListEntry
 import com.cerocoder.meshtest.ui.DeviceListScreen
 import com.cerocoder.meshtest.ui.PacketLogScreen
@@ -61,10 +65,34 @@ class MainActivity : ComponentActivity() {
                         ActivityResultContracts.RequestMultiplePermissions(),
                     ) { readiness = container.availability.check() }
 
+                    // Разрешение на уведомления спрашивается заодно с Bluetooth, но
+                    // в готовность не входит: без него приложение полностью работает,
+                    // просто уведомление foreground-сервиса не показывается.
+                    val requested = remember {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            container.availability.requiredPermissions + Manifest.permission.POST_NOTIFICATIONS
+                        } else {
+                            container.availability.requiredPermissions
+                        }
+                    }
+
+                    // Сервис поднимается уже на стадии подключения, а не после её
+                    // завершения: handshake занимает секунды, и всё это время процесс
+                    // должен быть защищён от усыпления.
+                    LaunchedEffect(state) {
+                        when (state) {
+                            ConnectionState.Connecting,
+                            ConnectionState.Connected,
+                            -> MeshForegroundService.start(context)
+
+                            is ConnectionState.Disconnected -> MeshForegroundService.stop(context)
+                        }
+                    }
+
                     LaunchedEffect(readiness) {
                         when (readiness) {
                             BleReadiness.PERMISSIONS_MISSING ->
-                                permissionLauncher.launch(container.availability.requiredPermissions)
+                                permissionLauncher.launch(requested)
 
                             // Сканируем, пока экран жив. Дедупликация по адресу: устройство
                             // повторяется при каждом объявлении.
