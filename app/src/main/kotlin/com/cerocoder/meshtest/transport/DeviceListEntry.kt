@@ -11,7 +11,7 @@ sealed class DeviceListEntry {
         override val address: String get() = "${MeshProtocol.DEMO_PREFIX}$scenarioId"
     }
 
-    /** Реальная нода по Bluetooth. Транспорт появится на этапе 2. */
+    /** Реальная нода, найденная в эфире сканером. */
     data class Ble(
         override val name: String,
         val mac: String,

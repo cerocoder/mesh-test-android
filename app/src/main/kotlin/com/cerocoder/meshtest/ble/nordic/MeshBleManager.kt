@@ -131,7 +131,11 @@ class MeshBleManager(context: Context) : BleManager(context) {
      */
     suspend fun release() {
         try {
-            disconnect().suspend()
+            // Таймаут обязателен. Закрытие идёт под замком менеджера соединения, а
+            // detector тишины существует именно потому, что стек Android умеет не
+            // присылать колбэк никогда. Без ограничения такой случай навсегда
+            // запер бы замок, и ни connect, ни disconnect больше не завершились бы.
+            disconnect().timeout(DISCONNECT_TIMEOUT_MS).suspend()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -155,6 +159,7 @@ class MeshBleManager(context: Context) : BleManager(context) {
         private const val CONNECT_RETRIES = 3
         private const val CONNECT_RETRY_DELAY_MS = 200
         private const val CONNECT_TIMEOUT_MS = 15_000L
+        private const val DISCONNECT_TIMEOUT_MS = 5_000L
         private const val TAG = "MeshBleManager"
     }
 }

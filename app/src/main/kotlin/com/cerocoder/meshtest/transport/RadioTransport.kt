@@ -3,7 +3,7 @@ package com.cerocoder.meshtest.transport
 /**
  * Транспорт до ноды: сырые байты в обе стороны.
  *
- * Реализации: [FakeRadioTransport] (демо-устройство) и BleRadioTransport (этап 2).
+ * Реализации: [FakeRadioTransport] (демо-устройство) и BleRadioTransport (живая нода).
  * Ничто выше этого интерфейса не знает, что именно подключено.
  */
 interface RadioTransport {

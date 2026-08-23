@@ -58,11 +58,27 @@ fun DeviceListScreen(
                         .padding(vertical = 12.dp),
                 ) {
                     Text(device.name, style = MaterialTheme.typography.bodyLarge)
-                    Text(device.address, style = MaterialTheme.typography.bodySmall)
+                    Text(deviceDetails(device), style = MaterialTheme.typography.bodySmall)
                 }
                 HorizontalDivider()
             }
         }
+    }
+}
+
+/**
+ * Вторая строка карточки устройства.
+ *
+ * Для живой ноды сканер приносит уровень сигнала и признак спаривания — по ним
+ * и выбирают, к какой из нескольких нод подключаться. Показывать один адрес,
+ * имея эти данные на руках, значило бы собирать их впустую.
+ */
+private fun deviceDetails(device: DeviceListEntry): String = when (device) {
+    is DeviceListEntry.Demo -> device.address
+    is DeviceListEntry.Ble -> buildString {
+        append(device.mac)
+        device.rssi?.let { append("  ·  $it dBm") }
+        if (device.bonded) append("  ·  спарено")
     }
 }
 

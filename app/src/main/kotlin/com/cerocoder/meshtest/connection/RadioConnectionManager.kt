@@ -73,7 +73,14 @@ class RadioConnectionManager(
 
     @Volatile
     private var currentAddress: String? = null
+    // @Volatile обязателен: оба таймера создаются из onConnect и onDataReceived,
+    // то есть с потоков транспорта и без замка, а отменяются из connect, disconnect
+    // и onDisconnect, которые замок держат. Чтение устаревшей ссылки означает
+    // переживший сессию таймер, который потом закроет уже чужое соединение.
+    @Volatile
     private var watchdog: Job? = null
+
+    @Volatile
     private var keepAlive: Job? = null
 
     @Volatile

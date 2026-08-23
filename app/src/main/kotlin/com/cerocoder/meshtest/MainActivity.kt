@@ -1,6 +1,11 @@
 package com.cerocoder.meshtest
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,7 +26,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import com.cerocoder.meshtest.ble.BleReadiness
+import com.cerocoder.meshtest.connection.ConnectionState
 import com.cerocoder.meshtest.service.MeshForegroundService
 import com.cerocoder.meshtest.transport.DeviceListEntry
 import com.cerocoder.meshtest.ui.DeviceListScreen
@@ -58,6 +66,7 @@ class MainActivity : ComponentActivity() {
 
                     val context = LocalContext.current
                     val found = remember { mutableStateMapOf<String, DeviceListEntry.Ble>() }
+                    var connectRequested by rememberSaveable { mutableStateOf(false) }
                     var readiness by readinessState
 
                     val permissionLauncher = rememberLauncherForActivityResult(
@@ -75,17 +84,53 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    LaunchedEffect(readiness) {
-                        when (readiness) {
-                            BleReadiness.PERMISSIONS_MISSING ->
+                    // Адаптер включают из шторки, а она активность не останавливает —
+                    // onResume в этом случае не вызывается, и без подписки на событие
+                    // экран остался бы с устаревшей готовностью.
+                    DisposableEffect(Unit) {
+                        val receiver = object : BroadcastReceiver() {
+                            override fun onReceive(ctx: Context?, intent: Intent?) {
+                                readinessState.value = container.availability.check()
+                            }
+                        }
+                        ContextCompat.registerReceiver(
+                            context,
+                            receiver,
+                            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+                            ContextCompat.RECEIVER_NOT_EXPORTED,
+                        )
+                        onDispose { context.unregisterReceiver(receiver) }
+                    }
+
+                    // Сканирование прекращается, как только пользователь выбрал ноду.
+                    // Скан в режиме низкой задержки одновременно с активной GATT-связью
+                    // на многих телефонах сам по себе рвёт соединение — а обвиняли бы в
+                    // этом цикл переподключения. Ключом стоит намерение, а не состояние
+                    // соединения: состояние скачет на каждой попытке, и перезапуск скана
+                    // упёрся бы в системный лимит в пять стартов за тридцать секунд.
+                    val scanning = readiness == BleReadiness.READY && !showLog && !connectRequested
+
+                    LaunchedEffect(readiness, scanning) {
+                        when {
+                            readiness == BleReadiness.PERMISSIONS_MISSING ->
                                 permissionLauncher.launch(requested)
 
-                            // Сканируем, пока экран жив. Дедупликация по адресу: устройство
-                            // повторяется при каждом объявлении.
-                            BleReadiness.READY ->
-                                container.scanner.scan().collect { found[it.mac] = it }
+                            // Дедупликация по адресу: устройство повторяется при каждом
+                            // объявлении.
+                            scanning -> container.scanner.scan().collect { found[it.mac] = it }
+                        }
+                    }
 
-                            BleReadiness.ADAPTER_OFF, BleReadiness.UNSUPPORTED -> Unit
+                    // Менеджер сам оборвал связь и больше ничего не делает: причина
+                    // непустая только у его собственных отказов, тогда как транспорт при
+                    // очередной неудачной попытке ставит Disconnected без текста и
+                    // продолжает пытаться. Гасим сервис, чтобы уведомление не обещало
+                    // соединение, которого нет и не будет без нового тапа.
+                    LaunchedEffect(state) {
+                        val current = state
+                        if (current is ConnectionState.Disconnected && current.reason != null) {
+                            connectRequested = false
+                            MeshForegroundService.stop(context)
                         }
                     }
 
@@ -111,10 +156,12 @@ class MainActivity : ComponentActivity() {
                                 // состояние через Disconnected, и привязка к состоянию
                                 // гасила бы сервис ровно на время отката — то есть именно
                                 // тогда, когда защита процесса и нужна.
+                                connectRequested = true
                                 MeshForegroundService.start(context)
                                 container.connectionManager.connect(device.address)
                             },
                             onDisconnect = {
+                                connectRequested = false
                                 scope.launch {
                                     container.connectionManager.disconnect()
                                     MeshForegroundService.stop(context)
