@@ -58,7 +58,7 @@ app/src/main/kotlin/com/cerocoder/meshtest/
 │   ├── protocol/                          чистый Kotlin, тестируется на JVM
 │   │   ├── MeshGattClient.kt              контракт: четыре операции над характеристиками
 │   │   ├── MeshRadioProfile.kt            drain-цикл поверх клиента
-│   │   └── BleFailure.kt                  классификация GATT-статусов
+│   │   └── BleSession.kt                  открытая сессия: клиент плюс закрытие
 │   ├── nordic/                            Android-специфика, юнит-тестами не покрывается
 │   │   ├── MeshBleManager.kt              подкласс BleManager: сервис, характеристики, MTU
 │   │   ├── NordicMeshGattClient.kt        MeshGattClient поверх MeshBleManager
@@ -75,7 +75,8 @@ app/src/main/kotlin/com/cerocoder/meshtest/
 app/src/test/kotlin/com/cerocoder/meshtest/ble/
 ├── protocol/FakeMeshGattClient.kt         управляемый двойник: очередь кадров, эмуляция notify
 ├── protocol/MeshRadioProfileTest.kt       drain-цикл, затравка, ожидание CCCD, ошибки
-├── protocol/BleFailureTest.kt             табличные тесты классификации
+├── protocol/FakeBleSession.kt             сессия-двойник: сценарии отказов подключения
+├── BleRadioTransportTest.kt               цикл переподключения, порядок, освобождение
 └── ReconnectPolicyTest.kt                 backoff, порог стабильности, счётчик
 ```
 
@@ -319,7 +320,7 @@ git commit -m "feat: зависимости Nordic, разрешения BLE и 
 - Create: `app/src/test/kotlin/com/cerocoder/meshtest/ble/protocol/FakeMeshGattClient.kt`
 
 **Interfaces:**
-- Produces: `interface MeshGattClient` с членами `fromNumNotifications: Flow<Unit>`, `suspend fun awaitSubscriptionReady()`, `suspend fun readFromRadio(): ByteArray`, `suspend fun writeToRadio(bytes: ByteArray)`; тестовый двойник `FakeMeshGattClient` с методами `enqueue(vararg frames: ByteArray)`, `emitNotification()`, свойствами `writes: List<ByteArray>`, `reads: Int` и флагом `failNextRead: Boolean`.
+- Produces: `interface BleSession` с членами `client: MeshGattClient` и `suspend fun close()`; `interface MeshGattClient` с членами `fromNumNotifications: Flow<Unit>`, `suspend fun awaitSubscriptionReady()`, `suspend fun readFromRadio(): ByteArray`, `suspend fun writeToRadio(bytes: ByteArray)`; тестовый двойник `FakeMeshGattClient` с методами `enqueue(vararg frames: ByteArray)`, `emitNotification()`, свойствами `writes: List<ByteArray>`, `reads: Int` и флагом `failNextRead: Boolean`.
 
 - [ ] **Step 1: Объявить контракт**
 
@@ -363,7 +364,31 @@ interface MeshGattClient {
 }
 ```
 
-- [ ] **Step 2: Написать двойник**
+- [ ] **Step 2: Объявить сессию**
+
+`app/src/main/kotlin/com/cerocoder/meshtest/ble/protocol/BleSession.kt`:
+
+```kotlin
+package com.cerocoder.meshtest.ble.protocol
+
+/**
+ * Открытая сессия с нодой: готовый к работе клиент и способ её закрыть.
+ *
+ * Существует ради проверяемости. Транспорт получает функцию открытия сессии
+ * извне, поэтому его цикл переподключения, порядок операций и освобождение
+ * ресурсов тестируются на JVM — без Android, без Nordic и без ноды.
+ */
+interface BleSession {
+
+    /** Клиент, через который идёт протокол. Валиден до вызова [close]. */
+    val client: MeshGattClient
+
+    /** Закрыть сессию и освободить ресурсы. Повторный вызов безопасен. */
+    suspend fun close()
+}
+```
+
+- [ ] **Step 3: Написать двойник**
 
 `app/src/test/kotlin/com/cerocoder/meshtest/ble/protocol/FakeMeshGattClient.kt`:
 
@@ -433,16 +458,16 @@ class FakeMeshGattClient : MeshGattClient {
 }
 ```
 
-- [ ] **Step 3: Прогон в CI**
+- [ ] **Step 4: Прогон в CI**
 
 Run: `gradle :app:compileDebugUnitTestKotlin`
 Expected: BUILD SUCCESSFUL — двойник компилируется, интерфейс реализован полностью.
 
-- [ ] **Step 4: Коммит**
+- [ ] **Step 5: Коммит**
 
 ```
 git add app/src/main/kotlin/com/cerocoder/meshtest/ble/protocol app/src/test/kotlin/com/cerocoder/meshtest/ble/protocol
-git commit -m "feat: контракт GATT-клиента Meshtastic и управляемый двойник"
+git commit -m "feat: контракт GATT-клиента и сессии Meshtastic, управляемый двойник"
 ```
 
 ---
@@ -674,45 +699,16 @@ git commit -m "feat: drain-цикл протокола Meshtastic поверх �
 
 ---
 
-### Task 5: Классификация сбоев и политика переподключения
+### Task 5: Политика переподключения
 
 **Files:**
-- Create: `app/src/main/kotlin/com/cerocoder/meshtest/ble/protocol/BleFailure.kt`
 - Create: `app/src/main/kotlin/com/cerocoder/meshtest/ble/ReconnectPolicy.kt`
-- Test: `app/src/test/kotlin/com/cerocoder/meshtest/ble/protocol/BleFailureTest.kt`
 - Test: `app/src/test/kotlin/com/cerocoder/meshtest/ble/ReconnectPolicyTest.kt`
 
 **Interfaces:**
-- Produces: `fun isSessionFatal(gattStatus: Int): Boolean`; `class ReconnectPolicy(minStableConnection: Duration = 5.seconds)` с методами `fun backoffFor(consecutiveFailures: Int): Duration`, `fun onOutcome(wasStable: Boolean, wasIntentional: Boolean): Int` и свойством `val settleDelay: Duration`.
+- Produces: `class ReconnectPolicy(minStableConnection: Duration = 5.seconds)` с методами `fun backoffFor(consecutiveFailures: Int): Duration`, `fun onOutcome(wasStable: Boolean, wasIntentional: Boolean): Int` и свойством `val settleDelay: Duration`.
 
 - [ ] **Step 1: Написать падающие тесты**
-
-`BleFailureTest.kt`:
-
-```kotlin
-package com.cerocoder.meshtest.ble.protocol
-
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
-
-class BleFailureTest {
-
-    @Test
-    fun `фатальные статусы распознаются`() {
-        listOf(8, 19, 22, 62, 129, 133).forEach { status ->
-            assertTrue("статус $status обязан считаться фатальным", isSessionFatal(status))
-        }
-    }
-
-    @Test
-    fun `успех и прочие статусы фатальными не считаются`() {
-        listOf(0, 1, 5, 47).forEach { status ->
-            assertFalse("статус $status не должен рвать сессию", isSessionFatal(status))
-        }
-    }
-}
-```
 
 `ReconnectPolicyTest.kt`:
 
@@ -771,34 +767,10 @@ class ReconnectPolicyTest {
 
 - [ ] **Step 2: Прогон в CI — тесты должны упасть**
 
-Run: `gradle :app:testDebugUnitTest --tests "*BleFailureTest*" --tests "*ReconnectPolicyTest*"`
-Expected: FAIL — `Unresolved reference: isSessionFatal`, `ReconnectPolicy`.
+Run: `gradle :app:testDebugUnitTest --tests "*ReconnectPolicyTest*"`
+Expected: FAIL — `Unresolved reference: ReconnectPolicy`.
 
-- [ ] **Step 3: Реализовать классификацию**
-
-```kotlin
-package com.cerocoder.meshtest.ble.protocol
-
-/**
- * GATT-статусы, после которых чинить сессию бессмысленно — нужен полный
- * teardown и новое подключение.
- *
- * Значения подтверждены практикой эталонной реализации Meshtastic-Android.
- */
-private val SESSION_FATAL_STATUSES = setOf(
-    8,   // GATT_CONN_TIMEOUT — supervision timeout, устройство ушло из зоны
-    19,  // GATT_CONN_TERMINATE_PEER_USER — нода разорвала сама: перезагрузка, выключение
-    22,  // GATT_CONN_LMP_TIMEOUT — зависание радио или прошивки
-    62,  // GATT_CONN_FAIL_ESTABLISH — не удалось установить связь
-    129, // GATT_FAILURE
-    133, // GATT_ERROR — классический «протухший» хендл на Android
-)
-
-/** Означает ли статус, что сессия неисправима. */
-fun isSessionFatal(gattStatus: Int): Boolean = gattStatus in SESSION_FATAL_STATUSES
-```
-
-- [ ] **Step 4: Реализовать политику**
+- [ ] **Step 3: Реализовать политику**
 
 ```kotlin
 package com.cerocoder.meshtest.ble
@@ -845,16 +817,16 @@ class ReconnectPolicy(
 }
 ```
 
-- [ ] **Step 5: Прогон в CI — тесты должны пройти**
+- [ ] **Step 4: Прогон в CI — тесты должны пройти**
 
-Run: `gradle :app:testDebugUnitTest --tests "*BleFailureTest*" --tests "*ReconnectPolicyTest*"`
-Expected: PASS, 7 тестов.
+Run: `gradle :app:testDebugUnitTest --tests "*ReconnectPolicyTest*"`
+Expected: PASS, 5 тестов.
 
-- [ ] **Step 6: Коммит**
+- [ ] **Step 5: Коммит**
 
 ```
 git add app/src/main/kotlin/com/cerocoder/meshtest/ble app/src/test/kotlin/com/cerocoder/meshtest/ble
-git commit -m "feat: классификация GATT-сбоев и политика переподключения"
+git commit -m "feat: политика переподключения с экспоненциальным откатом"
 ```
 
 ---
@@ -869,7 +841,7 @@ git commit -m "feat: классификация GATT-сбоев и полити�
 
 **Interfaces:**
 - Consumes: `MeshGattClient` (Task 3).
-- Produces: `class MeshBleManager(context: Context) : BleManager(context)` с членами `suspend fun connectTo(device: BluetoothDevice, autoConnect: Boolean)`, `val notifications: Flow<Unit>`, `suspend fun awaitReady()`, `suspend fun read(): ByteArray`, `suspend fun write(bytes: ByteArray)`, `fun release()`; `class NordicMeshGattClient(manager: MeshBleManager) : MeshGattClient`.
+- Produces: `suspend fun openNordicSession(context: Context, mac: String): BleSession`; `class MeshBleManager(context: Context) : BleManager(context)` с членами `suspend fun connectTo(device: BluetoothDevice, autoConnect: Boolean)`, `val notifications: Flow<Unit>`, `suspend fun awaitReady()`, `suspend fun read(): ByteArray`, `suspend fun write(bytes: ByteArray)`, `fun release()`; `class NordicMeshGattClient(manager: MeshBleManager) : MeshGattClient`.
 
 - [ ] **Step 1: Написать менеджер**
 
@@ -1008,16 +980,64 @@ class NordicMeshGattClient(private val manager: MeshBleManager) : MeshGattClient
 }
 ```
 
-- [ ] **Step 3: Прогон в CI**
+- [ ] **Step 3: Написать открыватель сессии**
+
+`app/src/main/kotlin/com/cerocoder/meshtest/ble/nordic/NordicBleSession.kt`:
+
+```kotlin
+package com.cerocoder.meshtest.ble.nordic
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import com.cerocoder.meshtest.ble.protocol.BleSession
+import com.cerocoder.meshtest.ble.protocol.MeshGattClient
+
+/** Сессия поверх [MeshBleManager]: держит менеджер и закрывает его. */
+private class NordicBleSession(private val manager: MeshBleManager) : BleSession {
+
+    override val client: MeshGattClient = NordicMeshGattClient(manager)
+
+    override suspend fun close() = manager.release()
+}
+
+/**
+ * Открыть сессию с нодой по MAC-адресу.
+ *
+ * Порядок здесь жёсткий: бондинг до подключения, затем GATT, затем ожидание
+ * записи CCCD. Нарушение даёт либо статус 133, либо тихое зависание.
+ */
+@SuppressLint("MissingPermission")
+suspend fun openNordicSession(context: Context, mac: String): BleSession {
+    val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+        ?: error("Bluetooth недоступен на этом устройстве")
+    val device: BluetoothDevice = adapter.getRemoteDevice(mac)
+    val bonded = device.bondState == BluetoothDevice.BOND_BONDED
+
+    val manager = MeshBleManager(context)
+    try {
+        // Спаренному устройству без свежей рекламы нужен терпеливый autoConnect.
+        manager.connectTo(device, autoConnect = bonded)
+        manager.awaitReady()
+    } catch (e: Throwable) {
+        manager.release()
+        throw e
+    }
+    return NordicBleSession(manager)
+}
+```
+
+- [ ] **Step 4: Прогон в CI**
 
 Run: `gradle :app:assembleDebug`
-Expected: BUILD SUCCESSFUL. Юнит-тестов у этой задачи нет по устройству вещей: слой проверяется вручную в Task 9.
+Expected: BUILD SUCCESSFUL. Юнит-тестов у этой задачи нет по устройству вещей: слой проверяется вручную в Task 10.
 
-- [ ] **Step 4: Коммит**
+- [ ] **Step 5: Коммит**
 
 ```
 git add app/src/main/kotlin/com/cerocoder/meshtest/ble/nordic
-git commit -m "feat: адаптер GATT-клиента поверх Nordic BLE Library"
+git commit -m "feat: адаптер GATT-клиента и открыватель сессии поверх Nordic"
 ```
 
 ---
@@ -1145,20 +1165,175 @@ git commit -m "feat: сканер нод Meshtastic с аппаратным фи
 - Modify: `app/src/main/kotlin/com/cerocoder/meshtest/MainActivity.kt`
 
 **Interfaces:**
-- Consumes: `RadioTransport`, `RadioTransportCallback` (этап 1); `MeshRadioProfile` (Task 4); `ReconnectPolicy`, `isSessionFatal` (Task 5); `MeshBleManager`, `NordicMeshGattClient` (Task 6); `BleScanner` (Task 7); `BluetoothAvailability` (Task 2).
+- Consumes: `RadioTransport`, `RadioTransportCallback` (этап 1); `BleSession`, `MeshGattClient` (Task 3); `MeshRadioProfile` (Task 4); `ReconnectPolicy` (Task 5); `openNordicSession` (Task 6); `BleScanner` (Task 7); `BluetoothAvailability` (Task 2).
 - Produces: `class BleRadioTransport(mac: String, callback: RadioTransportCallback, context: Context, parentScope: CoroutineScope) : RadioTransport`; в `AppContainer` — `val scanner: BleScanner`, `val availability: BluetoothAvailability`.
 
-- [ ] **Step 1: Написать транспорт**
+- [ ] **Step 1: Написать падающие тесты цикла подключения**
+
+`app/src/test/kotlin/com/cerocoder/meshtest/ble/protocol/FakeBleSession.kt`:
+
+```kotlin
+package com.cerocoder.meshtest.ble.protocol
+
+/** Сессия-двойник: отдаёт управляемый клиент и запоминает факт закрытия. */
+class FakeBleSession(override val client: FakeMeshGattClient = FakeMeshGattClient()) : BleSession {
+
+    var closed = false
+        private set
+
+    override suspend fun close() {
+        closed = true
+    }
+}
+```
+
+`app/src/test/kotlin/com/cerocoder/meshtest/ble/BleRadioTransportTest.kt`:
 
 ```kotlin
 package com.cerocoder.meshtest.ble
 
-import android.annotation.SuppressLint
-import android.bluetooth.BluetoothManager
-import android.content.Context
+import com.cerocoder.meshtest.ble.protocol.FakeBleSession
+import com.cerocoder.meshtest.transport.RadioTransportCallback
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
+
+private class RecordingCallback : RadioTransportCallback {
+    var connects = 0
+    var disconnects = 0
+    val frames = mutableListOf<ByteArray>()
+
+    override fun onConnect() {
+        connects++
+    }
+
+    override fun onDisconnect(isPermanent: Boolean) {
+        disconnects++
+    }
+
+    override fun onDataReceived(bytes: ByteArray) {
+        frames += bytes
+    }
+}
+
+class BleRadioTransportTest {
+
+    private fun TestScope.scope(): CoroutineScope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+
+    @Test
+    fun `открытая сессия доводит кадры до коллбэка`() = runTest {
+        val callback = RecordingCallback()
+        val session = FakeBleSession()
+        session.client.enqueue(byteArrayOf(1), byteArrayOf(2))
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = { session },
+        )
+
+        transport.start()
+        session.client.markSubscriptionReady()
+        advanceTimeBy(4.seconds)
+        advanceUntilIdle()
+
+        assertEquals(1, callback.connects)
+        assertEquals(2, callback.frames.size)
+    }
+
+    @Test
+    fun `отказ открытия повторяется с откатом`() = runTest {
+        val callback = RecordingCallback()
+        var attempts = 0
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = {
+                attempts++
+                throw IllegalStateException("нода недоступна")
+            },
+        )
+
+        transport.start()
+        advanceTimeBy(30.seconds)
+        advanceUntilIdle()
+
+        assertTrue("после отказа обязаны быть новые попытки, было $attempts", attempts >= 2)
+        assertTrue("каждая неудача сообщается наверх", callback.disconnects >= 2)
+    }
+
+    @Test
+    fun `сессия закрывается при завершении работы транспорта`() = runTest {
+        val callback = RecordingCallback()
+        val session = FakeBleSession()
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = { session },
+        )
+
+        transport.start()
+        session.client.markSubscriptionReady()
+        advanceTimeBy(4.seconds)
+        advanceUntilIdle()
+        transport.close()
+        advanceUntilIdle()
+
+        assertTrue("незакрытая сессия — это утёкшее GATT-соединение", session.closed)
+    }
+
+    @Test
+    fun `после close переподключение прекращается`() = runTest {
+        val callback = RecordingCallback()
+        var attempts = 0
+        val transport = BleRadioTransport(
+            mac = "AA:BB:CC:DD:EE:FF",
+            callback = callback,
+            parentScope = scope(),
+            now = { currentTime },
+            openSession = {
+                attempts++
+                FakeBleSession()
+            },
+        )
+
+        transport.start()
+        advanceTimeBy(10.seconds)
+        val afterClose = attempts
+        transport.close()
+
+        advanceTimeBy(120.seconds)
+        advanceUntilIdle()
+
+        assertEquals("закрытый транспорт не имеет права оживать", afterClose, attempts)
+    }
+}
+```
+
+- [ ] **Step 2: Прогон в CI — тесты должны упасть**
+
+Run: `gradle :app:testDebugUnitTest --tests "*BleRadioTransportTest*"`
+Expected: FAIL — `Unresolved reference: BleRadioTransport`.
+
+- [ ] **Step 3: Написать транспорт**
+
+```kotlin
+package com.cerocoder.meshtest.ble
+
 import android.util.Log
-import com.cerocoder.meshtest.ble.nordic.MeshBleManager
-import com.cerocoder.meshtest.ble.nordic.NordicMeshGattClient
+import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshRadioProfile
 import com.cerocoder.meshtest.transport.RadioTransport
 import com.cerocoder.meshtest.transport.RadioTransportCallback
@@ -1168,7 +1343,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1176,25 +1350,21 @@ import kotlinx.coroutines.withContext
 /**
  * Транспорт до реальной ноды по Bluetooth LE.
  *
- * Порядок операций внутри одной попытки задан жёстко и нарушать его нельзя:
- * бондинг до подключения (иначе прошивка, требующая шифрованный канал, отвечает
- * статусом 5 или 133), затем GATT, затем ожидание записи CCCD и только потом
- * передача протоколу — иначе запрос конфигурации уйдёт до включения нотификаций
- * и приложение зависнет без единой ошибки в логе.
+ * Открытие сессии передаётся снаружи ([openSession]) — благодаря этому цикл
+ * переподключения, порядок операций и освобождение ресурсов проверяются
+ * обычными JVM-тестами, а всё, что знает про Android, живёт в `ble/nordic/`.
  */
 class BleRadioTransport(
     private val mac: String,
     private val callback: RadioTransportCallback,
-    private val context: Context,
     parentScope: CoroutineScope,
+    private val policy: ReconnectPolicy = ReconnectPolicy(),
+    private val now: () -> Long = { System.currentTimeMillis() },
+    private val openSession: suspend (mac: String) -> BleSession,
 ) : RadioTransport {
 
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
     private val scope = CoroutineScope(parentScope.coroutineContext + job)
-    private val policy = ReconnectPolicy()
-
-    @Volatile
-    private var manager: MeshBleManager? = null
 
     @Volatile
     private var profile: MeshRadioProfile? = null
@@ -1202,54 +1372,42 @@ class BleRadioTransport(
     override fun start() {
         scope.launch {
             while (isActive) {
+                // Пауза перед каждой попыткой, включая первую: прошивке нужно время
+                // освободить свою GATT-сессию, иначе подключение срывается посреди
+                // handshake.
                 delay(policy.settleDelay)
-                val startedAt = System.currentTimeMillis()
-                val intentional = attemptSession()
-                val uptime = System.currentTimeMillis() - startedAt
+                val startedAt = now()
+                runSession()
+                val uptime = now() - startedAt
                 val stable = uptime >= policy.minStableConnection.inWholeMilliseconds
-                val failures = policy.onOutcome(wasStable = stable, wasIntentional = intentional)
-                if (intentional) return@launch
+                val failures = policy.onOutcome(wasStable = stable, wasIntentional = false)
                 callback.onDisconnect(isPermanent = false)
                 delay(policy.backoffFor(failures))
             }
         }
     }
 
-    /** Одна попытка «подключиться и жить до разрыва». Возвращает true, если разрыв намеренный. */
-    @SuppressLint("MissingPermission")
-    private suspend fun attemptSession(): Boolean {
-        val device = try {
-            val bluetooth = context.getSystemService(BluetoothManager::class.java)
-            bluetooth?.adapter?.getRemoteDevice(mac)
+    /** Одна попытка «подключиться и жить до разрыва». */
+    private suspend fun runSession() {
+        val session = try {
+            openSession(mac)
         } catch (e: Throwable) {
-            Log.w(TAG, "не удалось получить устройство по адресу", e)
-            null
-        } ?: return false
+            Log.w(TAG, "не удалось открыть сессию с $mac", e)
+            return
+        }
 
-        val bonded = device.bondState == android.bluetooth.BluetoothDevice.BOND_BONDED
-        val active = MeshBleManager(context)
-        manager = active
-
-        return try {
-            // Спаренному устройству без свежей рекламы нужен терпеливый autoConnect.
-            active.connectTo(device, autoConnect = bonded)
-            active.awaitReady()
-
-            val radio = MeshRadioProfile(NordicMeshGattClient(active))
+        try {
+            val radio = MeshRadioProfile(session.client)
             profile = radio
             callback.onConnect()
-
-            radio.fromRadio
-                .catch { e -> Log.w(TAG, "поток кадров прерван", e) }
-                .collect { callback.onDataReceived(it) }
-            false
+            radio.fromRadio.collect { callback.onDataReceived(it) }
         } catch (e: Throwable) {
             Log.w(TAG, "сессия завершилась ошибкой", e)
-            false
         } finally {
             profile = null
-            manager = null
-            withContext(NonCancellable) { active.release() }
+            // Незакрытая сессия — это утёкшее GATT-соединение и статус 133 при
+            // следующей попытке. Закрытие не должно срываться отменой.
+            withContext(NonCancellable) { session.close() }
         }
     }
 
@@ -1269,10 +1427,7 @@ class BleRadioTransport(
     }
 
     override suspend fun close() {
-        withContext(NonCancellable) {
-            manager?.release()
-            job.cancelAndJoin()
-        }
+        withContext(NonCancellable) { job.cancelAndJoin() }
     }
 
     private companion object {
@@ -1281,7 +1436,12 @@ class BleRadioTransport(
 }
 ```
 
-- [ ] **Step 2: Подключить к фабрике**
+- [ ] **Step 4: Прогон в CI — тесты должны пройти**
+
+Run: `gradle :app:testDebugUnitTest --tests "*BleRadioTransportTest*"`
+Expected: PASS, 4 теста.
+
+- [ ] **Step 5: Подключить к фабрике**
 
 В `RadioTransportFactoryImpl.kt` заменить ветку, бросавшую ошибку. Конструктору фабрики добавляется `context: Context`:
 
@@ -1290,13 +1450,13 @@ class BleRadioTransport(
             return BleRadioTransport(
                 mac = mac,
                 callback = callback,
-                context = context,
                 parentScope = scope,
+                openSession = { address -> openNordicSession(context, address) },
             )
         }
 ```
 
-- [ ] **Step 3: Прокинуть контекст и сканер в контейнер**
+- [ ] **Step 6: Прокинуть контекст и сканер в контейнер**
 
 `AppContainer.kt` — добавить контекст, доступность и сканер, сохранив всё существующее:
 
@@ -1339,7 +1499,7 @@ class AppContainer(
         container = AppContainer(applicationContext, BuildConfig.DEBUG)
 ```
 
-- [ ] **Step 4: Показать реальные устройства**
+- [ ] **Step 7: Показать реальные устройства**
 
 В `MainActivity.kt`, внутри `setContent` рядом с существующим состоянием, добавить сканирование и запрос разрешений:
 
@@ -1387,18 +1547,18 @@ class AppContainer(
 
 Причина отдельного объяснения на каждое состояние: пустой список сам по себе не отличает «нод рядом нет» от «мы не имеем права искать».
 
-- [ ] **Step 5: Прогон в CI**
+- [ ] **Step 8: Прогон в CI**
 
 Run: `gradle :app:testDebugUnitTest`
-Expected: PASS — тесты этапа 1 не затронуты; новых юнит-тестов у этой задачи нет.
+Expected: PASS — четыре новых теста транспорта плюс всё, что было раньше.
 
 Run: `gradle :app:assembleDebug`
 Expected: BUILD SUCCESSFUL.
 
-- [ ] **Step 6: Коммит**
+- [ ] **Step 9: Коммит**
 
 ```
-git add app/src/main/kotlin/com/cerocoder/meshtest
+git add app/src/main/kotlin/com/cerocoder/meshtest app/src/test/kotlin/com/cerocoder/meshtest
 git commit -m "feat: транспорт BLE и реальные устройства в списке"
 ```
 
