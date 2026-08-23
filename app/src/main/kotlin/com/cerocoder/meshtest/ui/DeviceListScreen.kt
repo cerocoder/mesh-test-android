@@ -64,7 +64,9 @@ fun DeviceListScreen(
 }
 
 private fun stateLabel(state: ConnectionState): String = when (state) {
-    ConnectionState.Disconnected -> "отключено"
+    is ConnectionState.Disconnected ->
+        state.reason?.let { "отключено: $it" } ?: "отключено"
+
     ConnectionState.Connecting -> "подключение (идёт handshake)"
     ConnectionState.Connected -> "подключено"
 }

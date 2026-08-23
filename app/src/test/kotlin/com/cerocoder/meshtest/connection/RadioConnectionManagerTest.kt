@@ -81,7 +81,10 @@ class RadioConnectionManagerTest {
     fun `изначально соединение отсутствует`() = runTest {
         val manager = RadioConnectionManager(TestFactory(scope()), scope())
 
-        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+        assertTrue(
+            "ожидалось отключённое состояние, получено ${manager.connectionState.value}",
+            manager.connectionState.value is ConnectionState.Disconnected,
+        )
     }
 
     @Test
@@ -134,7 +137,10 @@ class RadioConnectionManagerTest {
         manager.disconnect()
         advanceUntilIdle()
 
-        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+        assertTrue(
+            "ожидалось отключённое состояние, получено ${manager.connectionState.value}",
+            manager.connectionState.value is ConnectionState.Disconnected,
+        )
     }
 
     @Test
@@ -204,7 +210,10 @@ class RadioConnectionManagerTest {
         advanceTimeBy(31.seconds)
         advanceUntilIdle()
 
-        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+        assertTrue(
+            "ожидалось отключённое состояние, получено ${manager.connectionState.value}",
+            manager.connectionState.value is ConnectionState.Disconnected,
+        )
     }
 
     @Test
@@ -284,7 +293,10 @@ class RadioConnectionManagerTest {
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceTimeBy(31.seconds)
         advanceUntilIdle()
-        assertEquals(ConnectionState.Disconnected, manager.connectionState.value)
+        assertTrue(
+            "ожидалось отключённое состояние, получено ${manager.connectionState.value}",
+            manager.connectionState.value is ConnectionState.Disconnected,
+        )
 
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceUntilIdle()

@@ -8,7 +8,17 @@ package com.cerocoder.meshtest.connection
  * стадии handshake.
  */
 sealed interface ConnectionState {
-    data object Disconnected : ConnectionState
+
+    /**
+     * Связи нет.
+     *
+     * @param reason человекочитаемая причина, если разрыв произошёл не по воле
+     *   пользователя: таймаут handshake, отказ в разрешении, выключенный адаптер.
+     *   `null` означает намеренное отключение и не показывается как ошибка.
+     */
+    data class Disconnected(val reason: String? = null) : ConnectionState
+
     data object Connecting : ConnectionState
+
     data object Connected : ConnectionState
 }

@@ -40,7 +40,7 @@ class RadioConnectionManager(
     private val handshakeTimeout: Duration = 30.seconds,
 ) : RadioTransportCallback {
 
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected())
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     // Channel, а не SharedFlow: строгий FIFO обязателен — порядок кадров конфигурации
@@ -73,7 +73,7 @@ class RadioConnectionManager(
                 // Идемпотентность: повторный тап по уже подключённому устройству не
                 // должен пересоздавать транспорт — иначе останутся два транспорта,
                 // пишущих в один канал.
-                if (address == currentAddress && _connectionState.value != ConnectionState.Disconnected) {
+                if (address == currentAddress && _connectionState.value !is ConnectionState.Disconnected) {
                     Log.d(TAG, "уже подключены к этому адресу, повтор игнорируем")
                     return@withLock
                 }
@@ -95,7 +95,7 @@ class RadioConnectionManager(
                 } catch (e: Throwable) {
                     Log.w(TAG, "не удалось создать транспорт для адреса", e)
                     transport = null
-                    _connectionState.value = ConnectionState.Disconnected
+                    _connectionState.value = ConnectionState.Disconnected("не удалось создать транспорт: ${e.message}")
                 }
             }
         }
@@ -113,7 +113,7 @@ class RadioConnectionManager(
                 closeTransportLocked()
                 currentAddress = null
             }
-            _connectionState.value = ConnectionState.Disconnected
+            _connectionState.value = ConnectionState.Disconnected()
         }
     }
 
@@ -138,7 +138,7 @@ class RadioConnectionManager(
     override fun onDisconnect(isPermanent: Boolean) {
         watchdog?.cancel()
         Log.i(TAG, "связь потеряна (постоянно=$isPermanent)")
-        _connectionState.value = ConnectionState.Disconnected
+        _connectionState.value = ConnectionState.Disconnected(if (isPermanent) "соединение разорвано" else null)
         if (isPermanent) {
             // Владелец обязан освободить транспорт: сам он о себе не позаботится,
             // а за швом это будет живое GATT-соединение.
@@ -206,7 +206,7 @@ class RadioConnectionManager(
                 if (_connectionState.value == ConnectionState.Connecting) {
                     Log.w(TAG, "handshake не завершился за $handshakeTimeout, разрываем связь")
                     closeTransportLocked()
-                    _connectionState.value = ConnectionState.Disconnected
+                    _connectionState.value = ConnectionState.Disconnected("нода не ответила на запрос конфигурации за $handshakeTimeout")
                 }
             }
         }
