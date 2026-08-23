@@ -75,10 +75,18 @@ class BleRadioTransportTest {
 
         transport.start()
         advanceTimeBy(30.seconds)
-        advanceUntilIdle()
+        // advanceUntilIdle() здесь звать нельзя: цикл переподключения бесконечен,
+        // и прокрутка «до простоя» гоняла бы виртуальное время, пока runTest не
+        // убьёт тест по таймауту.
 
-        assertTrue("после отказа обязаны быть новые попытки, было $attempts", attempts >= 2)
-        assertTrue("каждая неудача сообщается наверх", callback.disconnects >= 2)
+        // Расписание: пауза 3 с перед каждой попыткой, откат 5, 10, 20 с. Значит
+        // попытки приходятся на 3-ю, 11-ю и 24-ю секунды, а четвёртая ушла бы за
+        // 44-ю. Точное число — это и есть проверка отката: без него попытка шла бы
+        // каждые три секунды, то есть их набралось бы около десяти.
+        assertEquals("откат не соблюдён: при нулевой паузе попыток было бы вдесятеро больше", 3, attempts)
+        assertEquals("каждая неудача сообщается наверх", 3, callback.disconnects)
+
+        transport.close()
     }
 
     @Test
@@ -114,18 +122,21 @@ class BleRadioTransportTest {
             now = { currentTime },
             openSession = {
                 attempts++
-                FakeBleSession()
+                throw IllegalStateException("нода недоступна")
             },
         )
 
         transport.start()
-        advanceTimeBy(10.seconds)
-        val afterClose = attempts
+        advanceTimeBy(30.seconds)
+        val beforeClose = attempts
+        // Без этой проверки тест был бы пустым: если цикл по любой причине встанет
+        // на первой попытке, счётчик замрёт сам собой и равенство ниже сойдётся
+        // даже при полностью сломанном close().
+        assertTrue("цикл обязан крутиться до закрытия, иначе стеречь нечего", beforeClose >= 2)
+
         transport.close()
-
         advanceTimeBy(120.seconds)
-        advanceUntilIdle()
 
-        assertEquals("закрытый транспорт не имеет права оживать", afterClose, attempts)
+        assertEquals("закрытый транспорт не имеет права оживать", beforeClose, attempts)
     }
 }

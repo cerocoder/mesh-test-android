@@ -25,9 +25,15 @@ class ReconnectPolicy(
     var consecutiveFailures: Int = 0
         private set
 
-    /** Учесть исход попытки и вернуть текущее число неудач подряд. */
-    fun onOutcome(wasStable: Boolean, wasIntentional: Boolean): Int {
-        consecutiveFailures = if (wasIntentional || wasStable) 0 else consecutiveFailures + 1
+    /**
+     * Учесть исход попытки и вернуть текущее число неудач подряд.
+     *
+     * Флага «разрыв намеренный» здесь нет намеренно. Намеренное отключение
+     * отменяет корутину транспорта, и цикл переподключения завершается, не дойдя
+     * до этого вызова, — то есть учитывать такой исход просто некому.
+     */
+    fun onOutcome(wasStable: Boolean): Int {
+        consecutiveFailures = if (wasStable) 0 else consecutiveFailures + 1
         return consecutiveFailures
     }
 

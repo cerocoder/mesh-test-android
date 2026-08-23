@@ -5,6 +5,7 @@ import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshRadioProfile
 import com.cerocoder.meshtest.transport.RadioTransport
 import com.cerocoder.meshtest.transport.RadioTransportCallback
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -48,7 +49,7 @@ class BleRadioTransport(
                 runSession()
                 val uptime = now() - startedAt
                 val stable = uptime >= policy.minStableConnection.inWholeMilliseconds
-                val failures = policy.onOutcome(wasStable = stable, wasIntentional = false)
+                val failures = policy.onOutcome(wasStable = stable)
                 callback.onDisconnect(isPermanent = false)
                 delay(policy.backoffFor(failures))
             }
@@ -59,6 +60,8 @@ class BleRadioTransport(
     private suspend fun runSession() {
         val session = try {
             openSession(mac)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Log.w(TAG, "не удалось открыть сессию с $mac", e)
             return
@@ -69,6 +72,13 @@ class BleRadioTransport(
             profile = radio
             callback.onConnect()
             radio.fromRadio.collect { callback.onDataReceived(it) }
+        } catch (e: CancellationException) {
+            // Отмена — это наш собственный close(), а не разрыв связи. Проглотив
+            // её, мы вернулись бы в цикл и успели бы записать неудачу в политику и
+            // доложить наверх о разрыве, которого не было: пользователь отключился
+            // сам. Пробрасываем — цикл завершится, а сессию всё равно закроет
+            // finally под NonCancellable.
+            throw e
         } catch (e: Throwable) {
             Log.w(TAG, "сессия завершилась ошибкой", e)
         } finally {
@@ -88,6 +98,8 @@ class BleRadioTransport(
         scope.launch {
             try {
                 radio.send(bytes)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 Log.w(TAG, "запись в TORADIO не удалась", e)
             }

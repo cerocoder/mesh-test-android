@@ -20,23 +20,16 @@ class ReconnectPolicyTest {
 
     @Test
     fun `стабильное соединение обнуляет счётчик неудач`() {
-        policy.onOutcome(wasStable = false, wasIntentional = false)
-        policy.onOutcome(wasStable = false, wasIntentional = false)
+        policy.onOutcome(wasStable = false)
+        policy.onOutcome(wasStable = false)
 
-        assertEquals(0, policy.onOutcome(wasStable = true, wasIntentional = false))
-    }
-
-    @Test
-    fun `намеренный разрыв обнуляет счётчик даже при коротком соединении`() {
-        policy.onOutcome(wasStable = false, wasIntentional = false)
-
-        assertEquals(0, policy.onOutcome(wasStable = false, wasIntentional = true))
+        assertEquals(0, policy.onOutcome(wasStable = true))
     }
 
     @Test
     fun `нестабильные соединения накапливают счётчик`() {
-        assertEquals(1, policy.onOutcome(wasStable = false, wasIntentional = false))
-        assertEquals(2, policy.onOutcome(wasStable = false, wasIntentional = false))
+        assertEquals(1, policy.onOutcome(wasStable = false))
+        assertEquals(2, policy.onOutcome(wasStable = false))
     }
 
     @Test

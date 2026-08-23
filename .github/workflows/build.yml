@@ -7,6 +7,12 @@ on:
 permissions:
   contents: write
 
+# Новый пуш в ту же ветку отменяет предыдущий прогон. Без этого зависший тест
+# держит раннер до дефолтного таймаута в шесть часов, а очередь копится.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash
@@ -14,6 +20,9 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Здоровый прогон укладывается в четыре минуты. Двадцати достаточно с запасом,
+    # а зависший тест перестаёт стоить часы машинного времени.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
