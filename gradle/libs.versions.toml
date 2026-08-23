@@ -6,6 +6,8 @@ coroutines = "1.11.0"
 protobufs = "2.7.26"
 wire = "6.4.5"
 activityCompose = "1.13.0"
+nordicBle = "2.11.0"
+nordicScanner = "1.6.0"
 
 [libraries]
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -17,6 +19,9 @@ coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-androi
 coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 meshtastic-protobufs = { module = "org.meshtastic:protobufs", version.ref = "protobufs" }
 wire-runtime = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
+nordic-ble = { module = "no.nordicsemi.android:ble", version.ref = "nordicBle" }
+nordic-ble-ktx = { module = "no.nordicsemi.android:ble-ktx", version.ref = "nordicBle" }
+nordic-scanner = { module = "no.nordicsemi.android.support.v18:scanner", version.ref = "nordicScanner" }
 junit = { module = "junit:junit", version = "4.13.2" }
 
 [plugins]

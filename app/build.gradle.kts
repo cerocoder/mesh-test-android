@@ -46,6 +46,10 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.coroutines.android)
 
+    implementation(libs.nordic.ble)
+    implementation(libs.nordic.ble.ktx)
+    implementation(libs.nordic.scanner)
+
     implementation(libs.meshtastic.protobufs)
     implementation(libs.wire.runtime)
 
