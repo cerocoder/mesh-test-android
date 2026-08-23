@@ -35,7 +35,7 @@ class AppContainer(
     val availability = BluetoothAvailability(context)
 
     /** Поиск нод в эфире. */
-    val scanner: BleScanner = BleScannerImpl(context)
+    val scanner: BleScanner = BleScannerImpl()
 
     private val factory: RadioTransportFactory =
         RadioTransportFactoryImpl(scope, isDebugBuild, context)
