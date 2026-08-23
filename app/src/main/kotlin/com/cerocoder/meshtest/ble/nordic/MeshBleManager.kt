@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -28,9 +29,24 @@ class MeshBleManager(context: Context) : BleManager(context) {
 
     private var subscriptionReady = CompletableDeferred<Unit>()
 
-    /** Поток уведомлений FROMNUM: значение не важно, важен сам факт. */
-    val notifications: Flow<Unit>
-        get() = setNotificationCallback(fromNum).asFlow().map { }
+    /**
+     * Поток уведомлений FROMNUM: значение не важно, важен сам факт.
+     *
+     * Инициализация однократная и намеренно ленивая. `setNotificationCallback`
+     * в модели Nordic не добавляет слушателя, а заменяет единственного, причём
+     * `asFlow()` закрывается пустым `awaitClose`: вытесненный коллектор не
+     * получит ни ошибки, ни завершения — он просто навсегда замолчит. Геттер,
+     * вычисляющий это заново на каждое обращение, превращал бы второе чтение
+     * свойства в тихую потерю входящего потока. Ленивость нужна потому, что
+     * `fromNum` появляется только внутри подключения, в
+     * [isRequiredServiceSupported].
+     */
+    val notifications: Flow<Unit> by lazy {
+        val characteristic = checkNotNull(fromNum) {
+            "FROMNUM ещё не найден: подписка запрошена до подключения"
+        }
+        setNotificationCallback(characteristic).asFlow().map { }
+    }
 
     override fun isRequiredServiceSupported(gatt: BluetoothGatt): Boolean {
         val service = gatt.getService(SERVICE_UUID) ?: return false
@@ -44,9 +60,13 @@ class MeshBleManager(context: Context) : BleManager(context) {
         // Android по умолчанию даёт ATT MTU 23, то есть 20 байт полезной нагрузки,
         // а кадры Meshtastic доходят до 512. Без этого запроса они не пролезут.
         requestMtu(MTU).enqueue()
+        // Локальная ссылка обязательна: onServicesInvalidated подменяет поле, и
+        // колбэк, замкнувшийся на поле, завершил бы уже другой Deferred, оставив
+        // ожидающего висеть навсегда.
+        val latch = subscriptionReady
         enableNotifications(fromNum)
-            .done { subscriptionReady.complete(Unit) }
-            .fail { _, status -> subscriptionReady.completeExceptionally(IllegalStateException("CCCD не записан, статус $status")) }
+            .done { latch.complete(Unit) }
+            .fail { _, status -> latch.completeExceptionally(IllegalStateException("CCCD не записан, статус $status")) }
             .enqueue()
     }
 
@@ -85,8 +105,24 @@ class MeshBleManager(context: Context) : BleManager(context) {
             .suspend()
     }
 
-    /** Разорвать связь и освободить ресурсы библиотеки. */
-    fun release() {
+    /**
+     * Разорвать связь и освободить ресурсы библиотеки.
+     *
+     * Порядок важен: `close()` закрывает `BluetoothGatt`, но не разрывает ACL-связь.
+     * Закрытие без предшествующего `disconnect()` — классическая причина того, что
+     * соединение остаётся висеть до таймаута на стороне ноды, а следующая попытка
+     * подключения падает со статусом 133. Цикл переподключения проходит здесь при
+     * каждом разрыве, так что цена ошибки набегает быстро.
+     */
+    suspend fun release() {
+        try {
+            disconnect().suspend()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Уже отключены или связь потеряна — это ожидаемо, закрывать всё равно надо.
+            Log.d(TAG, "штатное отключение не удалось, закрываем принудительно", e)
+        }
         try {
             close()
         } catch (e: Throwable) {
