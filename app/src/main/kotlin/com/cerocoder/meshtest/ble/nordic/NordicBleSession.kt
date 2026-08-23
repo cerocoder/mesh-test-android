@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import com.cerocoder.meshtest.ble.protocol.BleFailure
 import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshGattClient
 
@@ -34,7 +35,12 @@ private class NordicBleSession(private val manager: MeshBleManager) : BleSession
 @SuppressLint("MissingPermission")
 suspend fun openNordicSession(context: Context, mac: String): BleSession {
     val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-        ?: error("Bluetooth недоступен на этом устройстве")
+        ?: throw BleFailure("Bluetooth недоступен на этом устройстве")
+    // Состояние адаптера проверяется первым делом и отдельно. Без этой проверки
+    // выключенный Bluetooth проявляется дальше по коду как отказ createBond(), и
+    // человек читает на экране «не удалось начать спаривание» — сообщение, которое
+    // уводит от настоящей причины и заставляет искать проблему в ноде.
+    if (!adapter.isEnabled) throw BleFailure("Bluetooth выключен")
     val device: BluetoothDevice = adapter.getRemoteDevice(mac)
     val wasBonded = device.bondState == BluetoothDevice.BOND_BONDED
 

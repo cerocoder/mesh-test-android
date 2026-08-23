@@ -32,7 +32,11 @@ suspend fun ensureBondedBeforeConnect(device: BluetoothDevice) {
         when (device.bondState) {
             BluetoothDevice.BOND_BONDED -> return
             BluetoothDevice.BOND_BONDING -> sawBonding = true
-            else -> throw BleFailure("не удалось начать спаривание")
+            // Сюда попадаем, когда система отказалась начинать спаривание и не
+            // сообщила почему. Выключенный адаптер отсеян ещё в openNordicSession,
+            // так что остаётся редкое: нода вне зоны или стек занят прошлой
+            // попыткой. И то и другое лечится следующим кругом цикла.
+            else -> throw BleFailure("нода не отвечает на запрос спаривания")
         }
     }
 
