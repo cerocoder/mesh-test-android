@@ -131,10 +131,29 @@ class MeshBleManager(context: Context) : BleManager(context) {
         ConnectionState.Disconnected.Reason.UNKNOWN -> "связь потеряна по неизвестной причине"
     }
 
-    suspend fun read(): ByteArray = readCharacteristic(fromRadio).suspend().value ?: ByteArray(0)
+    /**
+     * Чтение и запись обязаны иметь предел, и по причине неочевидной.
+     *
+     * Обёртка ktx для чтения и записи приостанавливает корутину НЕотменяемо
+     * (`suspendNonCancellable`), в отличие от подключения и отключения. Значит
+     * отмена корутины такую операцию не прерывает: она висит, пока не сработает
+     * колбэк самой библиотеки. На молча умершей связи это растягивается до тех
+     * пор, пока стек Android не заметит потерю, — то есть на десятки секунд.
+     *
+     * Цена этого — не только задержка. Транспорт не может завершить сессию, пока
+     * его насос кадров стоит в такой операции, а закрытие транспорта идёт под
+     * замком менеджера соединения: на это время замирает и подключение, и
+     * отключение, и обработка разрывов. Выглядит как «приложение зависло».
+     *
+     * Собственный таймаут библиотеки будит корутину сам, отменяемости не добавляя,
+     * — этого достаточно, чтобы предел стал измеримым.
+     */
+    suspend fun read(): ByteArray =
+        readCharacteristic(fromRadio).timeout(OPERATION_TIMEOUT_MS).suspend().value ?: ByteArray(0)
 
     suspend fun write(bytes: ByteArray) {
         writeCharacteristic(toRadio, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            .timeout(OPERATION_TIMEOUT_MS)
             .suspend()
     }
 
@@ -182,6 +201,7 @@ class MeshBleManager(context: Context) : BleManager(context) {
         private const val CONNECT_RETRY_DELAY_MS = 200
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val DISCONNECT_TIMEOUT_MS = 5_000L
+        private const val OPERATION_TIMEOUT_MS = 5_000L
         private const val TAG = "MeshBleManager"
     }
 }
