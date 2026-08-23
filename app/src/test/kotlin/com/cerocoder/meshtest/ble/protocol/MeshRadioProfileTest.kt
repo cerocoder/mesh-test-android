@@ -1,10 +1,8 @@
 package com.cerocoder.meshtest.ble.protocol
 
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
@@ -25,7 +23,12 @@ class MeshRadioProfileTest {
 
         val job = launch { profile.fromRadio.take(3).toList(received) }
         client.markSubscriptionReady()
-        client.emitNotification()
+        // Нотификации здесь намеренно нет. Коллектор ещё не запущен (launch только
+        // поставил его в очередь StandardTestDispatcher), а `notifications` — поток
+        // без replay, как и настоящий доорбелл BLE: выпущенное до подписки теряется.
+        // Этот тест проверяет затравочное чтение и вычитывание до пустого ответа;
+        // за путь «нотификация будит цикл» отвечает тест транзиентной ошибки, где
+        // подписка гарантированно состоялась до первой нотификации.
         advanceUntilIdle()
         job.join()
 
