@@ -7,6 +7,8 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -153,7 +155,11 @@ class MeshBleManager(context: Context) : BleManager(context) {
             // запер бы замок, и ни connect, ни disconnect больше не завершились бы.
             disconnect().timeout(DISCONNECT_TIMEOUT_MS).suspend()
         } catch (e: CancellationException) {
-            throw e
+            // Отмену нашей корутины пробрасываем, отмену запроса самой библиотекой —
+            // нет: см. [nordicCall]. Именно здесь подделанная отмена убивала цикл
+            // переподключения, потому что release() зовётся на каждой неудаче.
+            if (!currentCoroutineContext().isActive) throw e
+            Log.d(TAG, "запрос отключения отменён библиотекой", e)
         } catch (e: Throwable) {
             // Уже отключены или связь потеряна — это ожидаемо, закрывать всё равно надо.
             Log.d(TAG, "штатное отключение не удалось, закрываем принудительно", e)

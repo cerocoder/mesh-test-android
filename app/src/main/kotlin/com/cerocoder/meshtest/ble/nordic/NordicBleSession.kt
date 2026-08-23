@@ -4,8 +4,8 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
-import kotlinx.coroutines.CancellationException
-import com.cerocoder.meshtest.ble.protocol.BleFailure
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import com.cerocoder.meshtest.ble.protocol.BleSession
 import com.cerocoder.meshtest.ble.protocol.MeshGattClient
 
@@ -42,16 +42,18 @@ suspend fun openNordicSession(context: Context, mac: String): BleSession {
 
     val manager = MeshBleManager(context)
     try {
-        manager.connectTo(device, autoConnect = wasBonded)
-        manager.awaitReady()
-    } catch (e: CancellationException) {
-        manager.release()
-        throw e
+        // nordicCall описывает отказ, пока типы Nordic ещё под рукой, и не даёт
+        // библиотеке выдать отмену собственного запроса за отмену корутины.
+        nordicCall {
+            manager.connectTo(device, autoConnect = wasBonded)
+            manager.awaitReady()
+        }
     } catch (e: Throwable) {
-        manager.release()
-        // Отказ описывается здесь, пока типы Nordic ещё под рукой: выше по стеку
-        // живёт чистый JVM-код, которому знать про них незачем.
-        throw BleFailure(describeBleFailure(e), e)
+        // Освобождение под NonCancellable: если отменили именно нас, обычный вызов
+        // release() оборвался бы на первом же приостановлении и оставил открытый
+        // GATT — а это статус 133 на следующей попытке.
+        withContext(NonCancellable) { manager.release() }
+        throw e
     }
     return NordicBleSession(manager)
 }
