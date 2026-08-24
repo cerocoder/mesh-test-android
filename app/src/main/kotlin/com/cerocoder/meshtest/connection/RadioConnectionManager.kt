@@ -282,16 +282,20 @@ class RadioConnectionManager(
         if (_packets.trySend(frame).isFailure) {
             droppedFrameCount.incrementAndGet()
         }
-        _packetLog.update { log ->
-            val record = FrameRecord(
-                seq = frameSeq.incrementAndGet(),
-                receivedAtMillis = now(),
-                sourceAddress = currentAddress.orEmpty(),
-                sizeBytes = bytes.size,
-                frame = frame,
-            )
-            (log + record).takeLast(PACKET_LOG_LIMIT)
-        }
+        // Запись строится ДО update, а не внутри его лямбды. Лямбда update
+        // перевыполняется целиком при неудачном compareAndSet, то есть обязана
+        // быть чистой. Побочные эффекты внутри неё тратили бы лишний номер и
+        // перечитывали часы: номер последней записи объявлен числом принятых
+        // за подключение, и разрывы в нумерации сделали бы это утверждение
+        // ложным.
+        val record = FrameRecord(
+            seq = frameSeq.incrementAndGet(),
+            receivedAtMillis = now(),
+            sourceAddress = currentAddress.orEmpty(),
+            sizeBytes = bytes.size,
+            frame = frame,
+        )
+        _packetLog.update { log -> (log + record).takeLast(PACKET_LOG_LIMIT) }
     }
 
     private fun sendToRadio(message: ToRadio) {
