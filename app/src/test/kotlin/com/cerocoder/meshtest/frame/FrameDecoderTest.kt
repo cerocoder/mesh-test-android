@@ -1,6 +1,7 @@
 package com.cerocoder.meshtest.frame
 
 import java.time.ZoneId
+import okio.ByteString.Companion.decodeHex
 import okio.ByteString.Companion.encodeUtf8
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -24,7 +25,7 @@ import org.meshtastic.proto.Telemetry
 
 class FrameDecoderTest {
 
-    private val decoder = FrameDecoder(FieldHints(ZoneId.of("UTC")), ZoneId.of("UTC"))
+    private val decoder = FrameDecoder(FieldHints(ZoneId.of("UTC")))
 
     private fun record(frame: FromRadio, seq: Long = 1) = FrameRecord(
         seq = seq,
@@ -200,17 +201,33 @@ class FrameDecoderTest {
 
     @Test
     fun `битая нагрузка не роняет разбор кадра`() {
+        // decodeHex, а не encodeUtf8: нужен байт 0x0A — заголовок поля без
+        // тела, — а не текст «0a», который разбирается успешно и превращает
+        // проверку в тавтологию.
         val frame = FromRadio(
             packet = MeshPacket(
                 from = 7,
-                decoded = Data(portnum = PortNum.POSITION_APP, payload = "0a".encodeUtf8()),
+                decoded = Data(portnum = PortNum.POSITION_APP, payload = "0a".decodeHex()),
             ),
         )
 
         val detail = decoder.decode(record(frame))
 
         assertEquals("packet", detail.title)
-        assertTrue(detail.sections.isNotEmpty())
+        assertTrue(detail.sections.any { it.title.contains("не разобрано") })
+    }
+
+    @Test
+    fun `неизвестный схеме вариант кадра не теряется`() {
+        // Тег 900 в схеме не занят: так выглядит кадр от прошивки новее, чем
+        // протобуфы приложения. Все известные поля пусты, и весь смысл — в
+        // неизвестных.
+        val frame = FromRadio.ADAPTER.decode(byteArrayOf(0xA0.toByte(), 0x38, 0x2A))
+
+        val detail = decoder.decode(record(frame))
+
+        val section = detail.sections.first { it.title == "FromRadio" }
+        assertTrue(section.fields.any { it.name == "unknown_fields" })
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.cerocoder.meshtest.frame
 
 import com.squareup.wire.WireField
 import java.time.ZoneId
+import java.util.Locale
 import okio.ByteString.Companion.decodeHex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -98,6 +99,21 @@ class FieldHintsTest {
         // По схеме ground_track хранится в 1/100 градуса: 18000 — это 180.00°.
         // Подпись "deg" без деления давала бы «18000 deg».
         assertEquals("180.00 deg", hints.format("Position", "ground_track", 18_000))
+    }
+
+    @Test
+    fun `дробные значения печатаются с точкой независимо от локали`() {
+        // Прогон CI идёт в POSIX-локали, поэтому без явной подмены этот дефект
+        // не проявляется — а на русском телефоне широта печаталась бы через
+        // запятую, рядом с соседними полями через точку.
+        val previous = Locale.getDefault()
+        Locale.setDefault(Locale.forLanguageTag("ru-RU"))
+        try {
+            assertTrue(hints.format("Position", "latitude_i", 556_012_340).startsWith("55.6012"))
+            assertEquals("180.00 deg", hints.format("Position", "ground_track", 18_000))
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 
     @Test

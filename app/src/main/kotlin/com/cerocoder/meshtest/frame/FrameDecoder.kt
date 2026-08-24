@@ -17,8 +17,12 @@ import org.meshtastic.proto.FromRadio
  */
 class FrameDecoder(
     private val hints: FieldHints = FieldHints(),
-    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
+
+    // Пояс берётся из hints, а не задаётся отдельным параметром: иначе
+    // «Часы ноды» и rx_time в той же секции могли бы получить разные пояса,
+    // если кто-то передаст FieldHints и FrameDecoder с разными значениями.
+    private val zone: ZoneId = hints.zone
 
     private val time = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
@@ -29,6 +33,13 @@ class FrameDecoder(
         val title = variant?.name ?: "пустой кадр"
 
         val sections = mutableListOf<Section>()
+        FieldWalker.unknownFields(record.frame)?.let {
+            // Неизвестные поля самого кадра, а не вложенного сообщения. Именно
+            // так выглядит вариант, которого нет в протобуфах приложения: все
+            // известные поля пусты, и без этой секции кадр читался бы как
+            // пустой, потеряв единственный признак «прошивка ноды новее».
+            sections += Section("FromRadio", listOf(DetailField("unknown_fields", FieldHints.hex(it))))
+        }
         when (val value = variant?.value) {
             null -> Unit
             is Message<*, *> -> collect(variant.name, value, includeDefaults, sections)

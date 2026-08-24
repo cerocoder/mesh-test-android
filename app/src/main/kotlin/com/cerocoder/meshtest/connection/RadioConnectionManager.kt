@@ -26,7 +26,6 @@ import kotlinx.coroutines.withContext
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.Heartbeat
 import org.meshtastic.proto.ToRadio
-import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.Volatile
@@ -255,9 +254,14 @@ class RadioConnectionManager(
 
         val frame = try {
             FromRadio.ADAPTER.decode(bytes)
-        } catch (e: IOException) {
-            // Один битый кадр не должен обрывать приём: это единственный канал,
-            // по которому в приложение вообще попадают данные.
+        } catch (e: Exception) {
+            // Ловим Exception, а не IOException: конструктор Wire-сообщений
+            // проверяет через require() число заполненных полей oneof (у
+            // FromRadio и у вложенного MeshPacket), и кадр с двумя занятыми
+            // вариантами бросит IllegalArgumentException мимо более узкого
+            // catch. Один битый кадр не должен обрывать приём: это
+            // единственный канал, по которому в приложение вообще попадают
+            // данные.
             Log.w(TAG, "не удалось разобрать FromRadio (${bytes.size} байт)", e)
             return
         }

@@ -4,6 +4,7 @@ import com.squareup.wire.WireEnum
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import okio.ByteString
 
 /**
@@ -16,8 +17,11 @@ import okio.ByteString
  *
  * Часовой пояс — параметр, а не `systemDefault()` внутри: иначе тест на
  * форматирование даты зависел бы от машины, на которой запущен.
+ *
+ * `internal`, а не `private`: `FrameDecoder` берёт пояс отсюда же для «Часов
+ * ноды», чтобы оба поля в одной секции не расходились в разные пояса.
  */
-class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
+class FieldHints(internal val zone: ZoneId = ZoneId.systemDefault()) {
 
     private val time = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
@@ -37,8 +41,12 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
             Render.NODE_ID -> nodeId(value as Int)
             Render.NODE_ID_LAST_BYTE -> "0x%02x".format(value as Int)
             Render.EPOCH_SECONDS -> epoch(value as Int)
-            Render.SCALED_1E7 -> "%.7f".format((value as Int) / 1e7)
-            Render.SCALED_1E2 -> "%.2f".format((value as Int) / 100.0)
+            // Locale.ROOT явно: без него format берёт локаль устройства, а на
+            // русской она печатает дробную часть через запятую — при том, что
+            // соседние поля вроде rx_snr идут через toString() и всегда через
+            // точку. Один экран не должен показывать два разделителя.
+            Render.SCALED_1E7 -> "%.7f".format(Locale.ROOT, (value as Int) / 1e7)
+            Render.SCALED_1E2 -> "%.2f".format(Locale.ROOT, (value as Int) / 100.0)
             Render.PLAIN -> value.toString()
         }
         return if (hint?.unit == null) text else "$text ${hint.unit}"
