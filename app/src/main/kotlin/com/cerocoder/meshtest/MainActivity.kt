@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.DisposableEffect
@@ -76,6 +77,21 @@ class MainActivity : ComponentActivity() {
                     var selected by rememberSaveable(stateSaver = FrameRecordSaver) {
                         mutableStateOf<FrameRecord?>(null)
                     }
+
+                    // Прокрутка живёт здесь, а не внутри PacketLogScreen: этот
+                    // экран полностью выходит из композиции, когда открыт кадр
+                    // (см. ветвление ниже), и rememberLazyListState() внутри
+                    // него умирал бы вместе с экраном при каждом переходе —
+                    // лента возвращалась бы в начало.
+                    val logListState = rememberLazyListState()
+
+                    // Якорь — номер кадра, а не индекс строки: пока экран кадра
+                    // открыт, лента продолжает принимать и вытеснять, и
+                    // сохранённый индекс указывал бы уже на другую строку.
+                    // null — восстанавливать нечего: лента ещё не открывалась,
+                    // либо якорь уже применён экраном.
+                    var logAnchor by rememberSaveable { mutableStateOf<Long?>(null) }
+
                     val state by container.connectionManager.connectionState.collectAsState()
                     val packets by container.connectionManager.packetLog.collectAsState()
                     val scope = rememberCoroutineScope()
@@ -162,6 +178,9 @@ class MainActivity : ComponentActivity() {
                     } else if (showLog) {
                         PacketLogScreen(
                             packets = packets,
+                            listState = logListState,
+                            anchor = logAnchor,
+                            onAnchorChange = { logAnchor = it },
                             onSelect = { selected = it },
                             onBack = { showLog = false },
                         )
