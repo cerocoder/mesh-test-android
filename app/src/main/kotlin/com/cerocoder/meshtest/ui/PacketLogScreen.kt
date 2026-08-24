@@ -29,8 +29,8 @@ import com.cerocoder.meshtest.frame.frameSummary
 fun PacketLogScreen(
     packets: List<FrameRecord>,
     listState: LazyListState,
-    anchor: Long?,
-    onAnchorChange: (Long?) -> Unit,
+    anchor: FrameRecord?,
+    onAnchorChange: (FrameRecord?) -> Unit,
     onSelect: (FrameRecord) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -59,11 +59,19 @@ fun PacketLogScreen(
     LaunchedEffect(Unit) {
         val target = anchor
         if (target != null) {
-            // Ищем по номеру кадра, а не по сохранённой позиции: пока экран
-            // кадра был открыт, лента продолжала принимать и вытеснять, и
-            // старый индекс указывал бы уже на другую строку. Не нашли —
-            // кадр вытеснен целиком, показываем начало ленты.
-            val index = packets.indexOfFirst { it.seq == target }
+            // Ищем по всей записи, а не по номеру: пока экран кадра был
+            // открыт, могло случиться автопереподключение — оно, независимо
+            // от того, какой экран открыт, чистит ленту и обнуляет нумерацию.
+            // Короткая новая сессия честно содержит кадр с тем же seq, что и
+            // якорь, но это уже другой кадр. FrameRecord — data-класс:
+            // равенство требует совпадения ещё и времени приёма, адреса,
+            // размера и содержимого, а не только номера, так что кадр чужой
+            // сессии совпадением seq не подделать. seq объявлен первым полем,
+            // поэтому на несовпадающих записях сравнение обрывается сразу на
+            // нём же, не доходя до дорогого поля с самим кадром. Не нашли —
+            // кадр вытеснен целиком (или сессия сменилась), показываем
+            // начало ленты.
+            val index = packets.indexOfFirst { it == target }
             listState.scrollToItem(if (index >= 0) index else 0)
             onAnchorChange(null)
         }
@@ -104,7 +112,7 @@ fun PacketLogScreen(
                             // возврата лента должна показать ту же видимую область
                             // целиком, а не просто содержать где-то на экране
                             // строку, по которой кликнули.
-                            onAnchorChange(packets.getOrNull(listState.firstVisibleItemIndex)?.seq)
+                            onAnchorChange(packets.getOrNull(listState.firstVisibleItemIndex))
                             onSelect(record)
                         }
                         .padding(vertical = 8.dp),
