@@ -59,6 +59,17 @@ class PayloadCodecsTest {
     }
 
     @Test
+    fun `порт симулятора не выдаётся за сжатый текст`() {
+        // В схеме у SIMULATOR_APP сказано «ENCODING: Protobuf (?)», про
+        // Unishox2 там ни слова. Пометка соседнего порта была бы выдумкой.
+        val result = PayloadCodecs.read(PortNum.SIMULATOR_APP, "ffffffffffffffff".decodeHex())
+
+        assertTrue(result is Payload.Raw)
+        assertTrue((result as Payload.Raw).note.contains("simulator"))
+        assertTrue(!result.note.contains("Unishox2"))
+    }
+
+    @Test
     fun `у codec2 выделяется заголовок`() {
         val result = PayloadCodecs.read(PortNum.AUDIO_APP, "c0dec2030102".decodeHex())
 

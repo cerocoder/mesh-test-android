@@ -91,9 +91,12 @@ object PayloadCodecs {
 
         // Точное представление в эфире по одной схеме не устанавливается:
         // пробуем объявленный тип, при отказе показываем байты.
-        PortNum.TEXT_MESSAGE_COMPRESSED_APP,
-        PortNum.SIMULATOR_APP,
-        -> attempt("Compressed", Compressed.ADAPTER, payload, "Unishox2-compressed")
+        PortNum.TEXT_MESSAGE_COMPRESSED_APP ->
+            attempt("Compressed", Compressed.ADAPTER, payload, "Unishox2-compressed text")
+        // У симулятора схема заявляет протобуф, но со знаком вопроса. Подпись
+        // соседнего порта здесь была бы выдумкой: про Unishox2 у него ни слова.
+        PortNum.SIMULATOR_APP ->
+            attempt("Compressed", Compressed.ADAPTER, payload, "simulator payload, schema marks encoding uncertain")
         PortNum.ATAK_PLUGIN_V2 ->
             attempt("TAKPacketV2", TAKPacketV2.ADAPTER, payload, "zstd dictionary compressed")
 
