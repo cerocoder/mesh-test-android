@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -29,9 +30,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.cerocoder.meshtest.ble.BleReadiness
 import com.cerocoder.meshtest.connection.ConnectionState
+import com.cerocoder.meshtest.frame.FrameRecord
+import com.cerocoder.meshtest.frame.frameRecordFromList
+import com.cerocoder.meshtest.frame.frameRecordToList
 import com.cerocoder.meshtest.service.MeshForegroundService
 import com.cerocoder.meshtest.transport.DeviceListEntry
 import com.cerocoder.meshtest.ui.DeviceListScreen
+import com.cerocoder.meshtest.ui.FrameDetailScreen
 import com.cerocoder.meshtest.ui.PacketLogScreen
 import kotlinx.coroutines.launch
 
@@ -60,6 +65,17 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier) {
                     var showLog by rememberSaveable { mutableStateOf(false) }
+
+                    // Выбор хранится записью, а не позицией в ленте: позиция
+                    // после вытеснения указала бы на другой кадр, а после
+                    // очистки ленты — ни на что.
+                    //
+                    // rememberSaveable, потому что ориентация в манифесте не
+                    // зафиксирована: без него поворот телефона закрывал бы
+                    // открытый кадр.
+                    var selected by rememberSaveable(stateSaver = FrameRecordSaver) {
+                        mutableStateOf<FrameRecord?>(null)
+                    }
                     val state by container.connectionManager.connectionState.collectAsState()
                     val packets by container.connectionManager.packetLog.collectAsState()
                     val scope = rememberCoroutineScope()
@@ -136,12 +152,17 @@ class MainActivity : ComponentActivity() {
 
                     val allDevices = container.devices + found.values.sortedBy { it.name }
 
-                    if (showLog) {
+                    // Проверка на opened — первой: пока кадр открыт, лента не
+                    // рисуется, и второй кадр открыть неоткуда. Этим и
+                    // выполняется требование «одновременно открыт только один
+                    // кадр».
+                    val opened = selected
+                    if (opened != null) {
+                        FrameDetailScreen(record = opened, onBack = { selected = null })
+                    } else if (showLog) {
                         PacketLogScreen(
                             packets = packets,
-                            // Открытие детального вида — задача 7: она заменит эту
-                            // пустую лямбду на сохраняемое состояние выбранной записи.
-                            onSelect = { },
+                            onSelect = { selected = it },
                             onBack = { showLog = false },
                         )
                     } else {
@@ -181,3 +202,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/**
+ * Снимок выбранного кадра для Bundle.
+ *
+ * `null` сохраняется пустым списком, а не через отдельный флаг: формат уже
+ * различим по длине — `frameRecordFromList` возвращает `null` на любом входе
+ * не из пяти элементов, включая пустой.
+ */
+private val FrameRecordSaver = listSaver<FrameRecord?, Any>(
+    save = { record -> if (record == null) emptyList() else frameRecordToList(record) },
+    restore = { saved -> frameRecordFromList(saved) },
+)
