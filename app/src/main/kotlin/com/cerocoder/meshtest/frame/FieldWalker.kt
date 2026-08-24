@@ -30,7 +30,11 @@ object FieldWalker {
             // Wire ставит аннотацию на backing-поле, а оно приватное.
             field.isAccessible = true
             val value = field.get(message) ?: continue
-            if (!includeDefaults && isIdentity(value)) continue
+            // Явное присутствие Wire выражает nullable-типом, и проверка на null
+            // выше его уже разобрала. Ноль в таком поле — настоящее значение:
+            // NodeInfo.hops_away = 0 означает «нода в прямой видимости», и
+            // спрятать его значит подменить смысл на «неизвестно».
+            if (!includeDefaults && !hasExplicitPresence(wire.label) && isIdentity(value)) continue
             val name = wire.declaredName.ifEmpty { field.name }
             // schemaIndex — позиция в объявлении. Порядок declaredFields не
             // определён спецификацией JVM, поэтому сортировка обязательна:
@@ -54,11 +58,25 @@ object FieldWalker {
         (message as? Message<*, *>)?.unknownFields?.takeIf { it.size > 0 }
 
     /**
+     * У поля есть явное присутствие: proto3 `optional` и члены `oneof`.
+     *
+     * Wire помечает и то и другое меткой OPTIONAL — отдельной метки для oneof в
+     * аннотации нет, там проставляется oneofName. ONE_OF в этой схеме не
+     * встречается, но перечисление его содержит, и по смыслу он тоже про
+     * присутствие.
+     */
+    private fun hasExplicitPresence(label: WireField.Label): Boolean =
+        label == WireField.Label.OPTIONAL || label == WireField.Label.ONE_OF
+
+    /**
      * Значение неотличимо от «поле не задано».
      *
-     * В proto3 у полей без явного присутствия ноль и отсутствие — одно и то же,
+     * Верно только для полей без явного присутствия — proto3 без `optional` и
+     * повторяющихся: там ноль (или пустой список) и отсутствие — одно и то же,
      * различить их невозможно в принципе. Поэтому такие поля скрываются: иначе
-     * `ModuleConfig` выдаёт 140 нулей, среди которых теряется заданное.
+     * `ModuleConfig` выдаёт 140 нулей, среди которых теряется заданное. Для
+     * полей с явным присутствием эта функция не вызывается: там о присутствии
+     * уже сказала проверка на null.
      */
     private fun isIdentity(value: Any): Boolean = when (value) {
         is Int -> value == 0

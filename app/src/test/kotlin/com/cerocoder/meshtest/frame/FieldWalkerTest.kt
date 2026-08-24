@@ -9,7 +9,9 @@ import org.meshtastic.proto.Compressed
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.MyNodeInfo
+import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.PortNum
+import org.meshtastic.proto.RouteDiscovery
 
 class FieldWalkerTest {
 
@@ -82,5 +84,30 @@ class FieldWalkerTest {
     @Test
     fun `у чистого сообщения неизвестных полей нет`() {
         assertNull(FieldWalker.unknownFields(MyNodeInfo(my_node_num = 7)))
+    }
+
+    @Test
+    fun `присутствующий ноль в поле с явным присутствием виден`() {
+        // hops_away = 0 означает «нода в прямой видимости». Спрятать его как
+        // умолчание — значит показать «неизвестно» вместо «напрямую».
+        val fields = FieldWalker.rawFields(NodeInfo(num = 7, hops_away = 0))
+
+        assertTrue(fields.any { it.name == "hops_away" && it.value == 0 })
+    }
+
+    @Test
+    fun `отсутствующее поле с явным присутствием скрыто`() {
+        val fields = FieldWalker.rawFields(NodeInfo(num = 7))
+
+        assertEquals(listOf("num"), fields.map { it.name })
+    }
+
+    @Test
+    fun `пустое повторяющееся поле скрыто`() {
+        // У повторяющихся полей явного присутствия нет: пустой список и
+        // отсутствие неотличимы, как и ноль у обычного скаляра.
+        val fields = FieldWalker.rawFields(RouteDiscovery())
+
+        assertTrue(fields.isEmpty())
     }
 }

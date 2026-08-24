@@ -105,7 +105,9 @@ import org.meshtastic.proto.Compressed
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.MyNodeInfo
+import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.PortNum
+import org.meshtastic.proto.RouteDiscovery
 
 class FieldWalkerTest {
 
@@ -161,6 +163,31 @@ class FieldWalkerTest {
         val fields = FieldWalker.rawFields(MyNodeInfo(my_node_num = 7))
 
         assertEquals(listOf("my_node_num"), fields.map { it.name })
+    }
+
+    @Test
+    fun `присутствующий ноль в поле с явным присутствием виден`() {
+        // hops_away = 0 означает «нода в прямой видимости». Спрятать его как
+        // умолчание — значит показать «неизвестно» вместо «напрямую».
+        val fields = FieldWalker.rawFields(NodeInfo(num = 7, hops_away = 0))
+
+        assertTrue(fields.any { it.name == "hops_away" && it.value == 0 })
+    }
+
+    @Test
+    fun `отсутствующее поле с явным присутствием скрыто`() {
+        val fields = FieldWalker.rawFields(NodeInfo(num = 7))
+
+        assertEquals(listOf("num"), fields.map { it.name })
+    }
+
+    @Test
+    fun `пустое повторяющееся поле скрыто`() {
+        // У повторяющихся полей явного присутствия нет: пустой список и
+        // отсутствие неотличимы, как и ноль у обычного скаляра.
+        val fields = FieldWalker.rawFields(RouteDiscovery())
+
+        assertTrue(fields.isEmpty())
     }
 
     @Test
@@ -259,7 +286,11 @@ object FieldWalker {
             // Wire ставит аннотацию на backing-поле, а оно приватное.
             field.isAccessible = true
             val value = field.get(message) ?: continue
-            if (!includeDefaults && isIdentity(value)) continue
+            // Явное присутствие Wire выражает nullable-типом, и проверка на null
+            // выше его уже разобрала. Ноль в таком поле — настоящее значение:
+            // NodeInfo.hops_away = 0 означает «нода в прямой видимости», и
+            // спрятать его значит подменить смысл на «неизвестно».
+            if (!includeDefaults && !hasExplicitPresence(wire.label) && isIdentity(value)) continue
             val name = wire.declaredName.ifEmpty { field.name }
             // schemaIndex — позиция в объявлении. Порядок declaredFields не
             // определён спецификацией JVM, поэтому сортировка обязательна:
@@ -283,11 +314,25 @@ object FieldWalker {
         (message as? Message<*, *>)?.unknownFields?.takeIf { it.size > 0 }
 
     /**
+     * У поля есть явное присутствие: proto3 `optional` и члены `oneof`.
+     *
+     * Wire помечает и то и другое меткой OPTIONAL — отдельной метки для oneof в
+     * аннотации нет, там проставляется oneofName. ONE_OF в этой схеме не
+     * встречается, но перечисление его содержит, и по смыслу он тоже про
+     * присутствие.
+     */
+    private fun hasExplicitPresence(label: WireField.Label): Boolean =
+        label == WireField.Label.OPTIONAL || label == WireField.Label.ONE_OF
+
+    /**
      * Значение неотличимо от «поле не задано».
      *
      * В proto3 у полей без явного присутствия ноль и отсутствие — одно и то же,
      * различить их невозможно в принципе. Поэтому такие поля скрываются: иначе
      * `ModuleConfig` выдаёт 140 нулей, среди которых теряется заданное.
+     *
+     * К полям с явным присутствием это правило не применяется — там ноль
+     * значащий; см. `hasExplicitPresence`.
      */
     private fun isIdentity(value: Any): Boolean = when (value) {
         is Int -> value == 0
@@ -307,7 +352,7 @@ object FieldWalker {
 
 - [ ] **Шаг 5: прогнать тесты**
 
-Ожидание: восемь тестов `FieldWalkerTest` проходят. **Если падает чтение
+Ожидание: одиннадцать тестов `FieldWalkerTest` проходят. **Если падает чтение
 значения** — переходить на запасной путь из спеки §13: публичные геттеры
 Kotlin-свойств (`getBattery_level()`), сопоставляемые с аннотированным полем по
 имени. Сообщить об этом в отчёте: меняется реализация `rawFields`, но не её
