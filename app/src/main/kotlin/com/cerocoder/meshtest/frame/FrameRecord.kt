@@ -44,11 +44,18 @@ fun frameRecordToList(record: FrameRecord): List<Any> = listOf(
 
 fun frameRecordFromList(saved: List<Any>): FrameRecord? {
     if (saved.size != 5) return null
-    return FrameRecord(
-        seq = saved[0] as Long,
-        receivedAtMillis = saved[1] as Long,
-        sourceAddress = saved[2] as String,
-        sizeBytes = saved[3] as Int,
-        frame = FromRadio.ADAPTER.decode(saved[4] as ByteArray),
-    )
+    // Снимок приходит из Bundle, который могла записать предыдущая версия
+    // приложения: и раскладка списка, и кодировка кадра с тех пор могли
+    // измениться. Исключение здесь означало бы падение при восстановлении
+    // состояния — то есть в тот момент, когда человек просто вернулся в
+    // приложение. Потерять открытый кадр не страшно, уронить экран — страшно.
+    return runCatching {
+        FrameRecord(
+            seq = saved[0] as Long,
+            receivedAtMillis = saved[1] as Long,
+            sourceAddress = saved[2] as String,
+            sizeBytes = saved[3] as Int,
+            frame = FromRadio.ADAPTER.decode(saved[4] as ByteArray),
+        )
+    }.getOrNull()
 }

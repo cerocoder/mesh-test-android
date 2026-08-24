@@ -15,11 +15,12 @@ import org.meshtastic.proto.DeviceMetrics
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.MyNodeInfo
+import org.meshtastic.proto.Neighbor
+import org.meshtastic.proto.NeighborInfo
 import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.QueueStatus
 import org.meshtastic.proto.Telemetry
-import org.meshtastic.proto.User
 
 class FrameDecoderTest {
 
@@ -168,6 +169,36 @@ class FrameDecoderTest {
     }
 
     @Test
+    fun `повторяющееся поле сообщений даёт секцию на каждый элемент`() {
+        val frame = FromRadio(
+            packet = MeshPacket(
+                from = 7,
+                decoded = Data(
+                    portnum = PortNum.NEIGHBORINFO_APP,
+                    payload = NeighborInfo(
+                        node_id = 7,
+                        neighbors = listOf(Neighbor(node_id = 11), Neighbor(node_id = 12)),
+                    ).encodeByteString(),
+                ),
+            ),
+        )
+
+        val detail = decoder.decode(record(frame))
+
+        val titles = detail.sections.map { it.title }
+        assertTrue(titles.any { it.endsWith("neighbors[0]") })
+        assertTrue(titles.any { it.endsWith("neighbors[1]") })
+    }
+
+    @Test
+    fun `кадр без заполненных полей не роняет разбор`() {
+        val detail = decoder.decode(record(FromRadio()))
+
+        assertEquals("пустой кадр", detail.title)
+        assertTrue(detail.common.isNotEmpty())
+    }
+
+    @Test
     fun `битая нагрузка не роняет разбор кадра`() {
         val frame = FromRadio(
             packet = MeshPacket(
@@ -194,5 +225,18 @@ class FrameDecoderTest {
     @Test
     fun `пустой снимок восстанавливается как отсутствие выбора`() {
         assertEquals(null, frameRecordFromList(emptyList()))
+    }
+
+    @Test
+    fun `снимок с неверными типами восстанавливается как отсутствие выбора`() {
+        assertEquals(null, frameRecordFromList(listOf(1, 2L, "m:тест", 3, ByteArray(0))))
+    }
+
+    @Test
+    fun `снимок с испорченными байтами кадра не роняет восстановление`() {
+        // 0x0A — заголовок поля без тела: разбор обязан оборваться.
+        val saved = listOf(1L, 2L, "m:тест", 3, byteArrayOf(0x0A))
+
+        assertEquals(null, frameRecordFromList(saved))
     }
 }
