@@ -1,5 +1,7 @@
 package com.cerocoder.meshtest.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,10 +20,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import org.meshtastic.proto.FromRadio
+import com.cerocoder.meshtest.frame.FrameRecord
+import com.cerocoder.meshtest.frame.frameSummary
 
 @Composable
-fun PacketLogScreen(packets: List<FromRadio>, onBack: () -> Unit) {
+fun PacketLogScreen(
+    packets: List<FrameRecord>,
+    onSelect: (FrameRecord) -> Unit,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
     val listState = rememberLazyListState()
 
     // Автопрокрутка только когда пользователь и так у конца ленты. Иначе поток кадров
@@ -45,18 +53,23 @@ fun PacketLogScreen(packets: List<FromRadio>, onBack: () -> Unit) {
             Text("К списку устройств")
         }
 
+        // Два числа, а не одно: размер ленты насыщается на 500, и после
+        // насыщения перестаёт показывать, идёт ли приём вообще.
         Text(
-            "Принято кадров: ${packets.size}",
+            "Принято за подключение: ${packets.lastOrNull()?.seq ?: 0}   в ленте: ${packets.size}",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 8.dp),
         )
 
         LazyColumn(state = listState, modifier = Modifier.padding(top = 8.dp)) {
-            items(packets) { frame ->
+            items(packets, key = { it.seq }) { record ->
                 Text(
-                    formatPacket(frame),
+                    frameSummary(record),
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(record) }
+                        .padding(vertical = 8.dp),
                 )
             }
         }

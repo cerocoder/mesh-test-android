@@ -137,10 +137,13 @@ class MainActivity : ComponentActivity() {
                     val allDevices = container.devices + found.values.sortedBy { it.name }
 
                     if (showLog) {
-                        // Времянка задачи 5: packetLog отдаёт FrameRecord, а PacketLogScreen
-                        // пока принимает голые FromRadio. Задача 6 переписывает экран под
-                        // FrameRecord и снимает этот .map.
-                        PacketLogScreen(packets = packets.map { it.frame }, onBack = { showLog = false })
+                        PacketLogScreen(
+                            packets = packets,
+                            // Открытие детального вида — задача 7: она заменит эту
+                            // пустую лямбду на сохраняемое состояние выбранной записи.
+                            onSelect = { },
+                            onBack = { showLog = false },
+                        )
                     } else {
                         DeviceListScreen(
                             devices = allDevices,
