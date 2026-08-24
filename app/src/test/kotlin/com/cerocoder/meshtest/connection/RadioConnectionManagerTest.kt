@@ -21,6 +21,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.MyNodeInfo
 import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.User
@@ -159,7 +160,7 @@ class RadioConnectionManagerTest {
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceUntilIdle()
 
-        assertEquals(5, manager.packetLog.value.count { it.node_info != null })
+        assertEquals(5, manager.packetLog.value.count { it.frame.node_info != null })
     }
 
     @Test
@@ -169,7 +170,7 @@ class RadioConnectionManagerTest {
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceUntilIdle()
 
-        val ids = manager.packetLog.value.map { it.id }
+        val ids = manager.packetLog.value.map { it.frame.id }
         assertEquals(ids.sorted(), ids)
     }
 
@@ -180,7 +181,7 @@ class RadioConnectionManagerTest {
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceUntilIdle()
 
-        assertTrue(manager.packetLog.value.first().my_info != null)
+        assertTrue(manager.packetLog.value.first().frame.my_info != null)
     }
 
     @Test
@@ -436,14 +437,14 @@ class RadioConnectionManagerTest {
 
         manager.connect("m:${Scenarios.FIVE_NODES_ID}")
         advanceUntilIdle()
-        val before = manager.packetLog.value.count { it.queueStatus != null }
+        val before = manager.packetLog.value.count { it.frame.queueStatus != null }
 
         advanceTimeBy(31.seconds)
         advanceUntilIdle()
 
         assertTrue(
             "нода отвечает на heartbeat статусом очереди — значит он был отправлен",
-            manager.packetLog.value.count { it.queueStatus != null } > before,
+            manager.packetLog.value.count { it.frame.queueStatus != null } > before,
         )
     }
 
@@ -479,5 +480,102 @@ class RadioConnectionManagerTest {
         // Одного состояния мало: зомби-сессия тем и опасна, что снизу о разрыве
         // никто не сообщит, и незакрытый транспорт остался бы висеть.
         assertTrue("транспорт зомби-сессии обязан быть закрыт", factory.last.closed)
+    }
+
+    @Test
+    fun `лента хранит запись с размером и источником`() = runTest {
+        val manager = RadioConnectionManager(SilentFactory(), scope())
+        manager.connect("m:тест")
+        runCurrent()
+        val bytes = FromRadio(my_info = MyNodeInfo(my_node_num = 7)).encode()
+
+        manager.onDataReceived(bytes)
+
+        val record = manager.packetLog.value.single()
+        assertEquals(1L, record.seq)
+        assertEquals(bytes.size, record.sizeBytes)
+        assertEquals("m:тест", record.sourceAddress)
+        assertEquals(7, record.frame.my_info?.my_node_num)
+    }
+
+    @Test
+    fun `время приёма берётся из часов, переданных менеджеру`() = runTest {
+        val manager = RadioConnectionManager(
+            SilentFactory(),
+            scope(),
+            now = { 1_700_000_009_000 },
+        )
+        manager.connect("m:тест")
+        runCurrent()
+
+        manager.onDataReceived(FromRadio(id = 1).encode())
+
+        assertEquals(1_700_000_009_000, manager.packetLog.value.single().receivedAtMillis)
+    }
+
+    @Test
+    fun `номер записи растёт и после того, как лента упёрлась в потолок`() = runTest {
+        // Размер ленты насыщается на 500, а число принятых — нет. Именно из
+        // номера последней записи экран берёт «принято за подключение»: сам
+        // размер после насыщения перестал бы расти, и человек решил бы, что
+        // приём встал.
+        val manager = RadioConnectionManager(SilentFactory(), scope())
+        manager.connect("m:тест")
+        runCurrent()
+
+        repeat(600) { manager.onDataReceived(FromRadio(id = it + 1).encode()) }
+
+        assertEquals(500, manager.packetLog.value.size)
+        assertEquals(600L, manager.packetLog.value.last().seq)
+    }
+
+    @Test
+    fun `подключение очищает ленту и обнуляет номер`() = runTest {
+        val manager = RadioConnectionManager(SilentFactory(), scope())
+        manager.connect("m:первый")
+        runCurrent()
+        manager.onDataReceived(FromRadio(id = 1).encode())
+
+        manager.connect("m:второй")
+        runCurrent()
+
+        assertTrue(manager.packetLog.value.isEmpty())
+
+        manager.onDataReceived(FromRadio(id = 2).encode())
+        assertEquals(1L, manager.packetLog.value.single().seq)
+    }
+
+    @Test
+    fun `открытая запись не меняется после вытеснения`() = runTest {
+        // Так проверяется требование «снимок»: экран держит запись, а не
+        // позицию в списке. Держал бы позицию — после вытеснения тот же индекс
+        // указал бы на другой кадр, и открытый вид молча подменился бы.
+        val manager = RadioConnectionManager(SilentFactory(), scope())
+        manager.connect("m:тест")
+        runCurrent()
+        manager.onDataReceived(FromRadio(my_info = MyNodeInfo(my_node_num = 7)).encode())
+        val opened = manager.packetLog.value.single()
+
+        repeat(600) { manager.onDataReceived(FromRadio(id = it + 1).encode()) }
+
+        assertEquals(1L, opened.seq)
+        assertEquals(7, opened.frame.my_info?.my_node_num)
+        assertTrue(manager.packetLog.value.none { it.seq == 1L })
+    }
+
+    @Test
+    fun `открытая запись не меняется после очистки ленты`() = runTest {
+        val manager = RadioConnectionManager(SilentFactory(), scope())
+        manager.connect("m:первый")
+        runCurrent()
+        manager.onDataReceived(FromRadio(my_info = MyNodeInfo(my_node_num = 7)).encode())
+        val opened = manager.packetLog.value.single()
+
+        manager.connect("m:второй")
+        runCurrent()
+
+        assertTrue(manager.packetLog.value.isEmpty())
+        assertEquals(7, opened.frame.my_info?.my_node_num)
+        assertEquals("m:первый", opened.sourceAddress)
     }
 }

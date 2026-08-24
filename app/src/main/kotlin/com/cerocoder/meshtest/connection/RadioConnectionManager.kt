@@ -1,6 +1,7 @@
 package com.cerocoder.meshtest.connection
 
 import android.util.Log
+import com.cerocoder.meshtest.frame.FrameRecord
 import com.cerocoder.meshtest.transport.MeshProtocol
 import com.cerocoder.meshtest.transport.RadioTransport
 import com.cerocoder.meshtest.transport.RadioTransportCallback
@@ -27,6 +28,7 @@ import org.meshtastic.proto.Heartbeat
 import org.meshtastic.proto.ToRadio
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -61,8 +63,18 @@ class RadioConnectionManager(
 
     // Отдельный накопитель для диагностического экрана: у Channel один потребитель,
     // и переподписка UI теряла бы кадры.
-    private val _packetLog = MutableStateFlow<List<FromRadio>>(emptyList())
-    val packetLog: StateFlow<List<FromRadio>> = _packetLog.asStateFlow()
+    private val _packetLog = MutableStateFlow<List<FrameRecord>>(emptyList())
+    val packetLog: StateFlow<List<FrameRecord>> = _packetLog.asStateFlow()
+
+    /**
+     * Номер кадра внутри подключения.
+     *
+     * Atomic, а не обычное поле: увеличивается с потока транспорта, а
+     * обнуляется под замком с другого. Сквозным его делать нельзя — лента
+     * очищается при подключении, и номер `#1043` в пустой ленте читался бы
+     * как сбой.
+     */
+    private val frameSeq = AtomicLong(0)
 
     private val droppedFrameCount = AtomicInteger(0)
     val droppedFrames: Int get() = droppedFrameCount.get()
@@ -136,6 +148,7 @@ class RadioConnectionManager(
                 if (byUser) recoveryAttempts = 0
                 closeTransportLocked()
                 _packetLog.value = emptyList()
+                frameSeq.set(0)
                 // Осушаем канал: иначе кадры прошлой сессии занимают буфер, и новая
                 // сессия теряет свои собственные, показывая при этом нулевой счётчик потерь.
                 @Suppress("ControlFlowWithEmptyBody")
@@ -269,7 +282,16 @@ class RadioConnectionManager(
         if (_packets.trySend(frame).isFailure) {
             droppedFrameCount.incrementAndGet()
         }
-        _packetLog.update { log -> (log + frame).takeLast(PACKET_LOG_LIMIT) }
+        _packetLog.update { log ->
+            val record = FrameRecord(
+                seq = frameSeq.incrementAndGet(),
+                receivedAtMillis = now(),
+                sourceAddress = currentAddress.orEmpty(),
+                sizeBytes = bytes.size,
+                frame = frame,
+            )
+            (log + record).takeLast(PACKET_LOG_LIMIT)
+        }
     }
 
     private fun sendToRadio(message: ToRadio) {
