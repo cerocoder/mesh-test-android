@@ -32,16 +32,16 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
             }
         }
 
-        return when (hints["$message.$field"]?.render ?: Render.PLAIN) {
+        val hint = hints["$message.$field"]
+        val text = when (hint?.render ?: Render.PLAIN) {
             Render.NODE_ID -> nodeId(value as Int)
             Render.NODE_ID_LAST_BYTE -> "0x%02x".format(value as Int)
             Render.EPOCH_SECONDS -> epoch(value as Int)
             Render.SCALED_1E7 -> "%.7f".format((value as Int) / 1e7)
-            Render.PLAIN -> {
-                val unit = hints["$message.$field"]?.unit
-                if (unit == null) value.toString() else "$value $unit"
-            }
+            Render.SCALED_1E2 -> "%.2f".format((value as Int) / 100.0)
+            Render.PLAIN -> value.toString()
         }
+        return if (hint?.unit == null) text else "$text ${hint.unit}"
     }
 
     private fun epoch(seconds: Int): String =
@@ -53,7 +53,7 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
             time.format(Instant.ofEpochSecond(seconds.toLong()).atZone(zone))
         }
 
-    private enum class Render { PLAIN, NODE_ID, NODE_ID_LAST_BYTE, EPOCH_SECONDS, SCALED_1E7 }
+    private enum class Render { PLAIN, NODE_ID, NODE_ID_LAST_BYTE, EPOCH_SECONDS, SCALED_1E7, SCALED_1E2 }
 
     private data class Hint(val render: Render = Render.PLAIN, val unit: String? = null)
 
@@ -71,7 +71,6 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
         "Neighbor.node_id" to Hint(Render.NODE_ID),
         "RouteDiscovery.route" to Hint(Render.NODE_ID),
         "RouteDiscovery.route_back" to Hint(Render.NODE_ID),
-        "MapReport.node_id" to Hint(Render.NODE_ID),
         "StoreForwardPlusPlus.encapsulated_to" to Hint(Render.NODE_ID),
         "StoreForwardPlusPlus.encapsulated_from" to Hint(Render.NODE_ID),
 
@@ -97,7 +96,8 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
         "PositionLite.longitude_i" to Hint(Render.SCALED_1E7),
         "MapReport.latitude_i" to Hint(Render.SCALED_1E7),
         "MapReport.longitude_i" to Hint(Render.SCALED_1E7),
-        "TAKPacket.latitude_i" to Hint(Render.SCALED_1E7),
+        "PLI.latitude_i" to Hint(Render.SCALED_1E7),
+        "PLI.longitude_i" to Hint(Render.SCALED_1E7),
         "TAKPacketV2.latitude_i" to Hint(Render.SCALED_1E7),
         "TAKPacketV2.longitude_i" to Hint(Render.SCALED_1E7),
         "Waypoint.latitude_i" to Hint(Render.SCALED_1E7),
@@ -117,26 +117,25 @@ class FieldHints(private val zone: ZoneId = ZoneId.systemDefault()) {
         "Position.altitude_hae" to Hint(unit = "m"),
         "Position.altitude_geoidal_separation" to Hint(unit = "m"),
         "Position.ground_speed" to Hint(unit = "m/s"),
-        "Position.ground_track" to Hint(unit = "deg"),
+        "Position.ground_track" to Hint(Render.SCALED_1E2, unit = "deg"),
         "EnvironmentMetrics.temperature" to Hint(unit = "°C"),
         "EnvironmentMetrics.relative_humidity" to Hint(unit = "%"),
         "EnvironmentMetrics.barometric_pressure" to Hint(unit = "hPa"),
         "EnvironmentMetrics.voltage" to Hint(unit = "V"),
-        "EnvironmentMetrics.current" to Hint(unit = "mA"),
         "EnvironmentMetrics.wind_speed" to Hint(unit = "m/s"),
         "EnvironmentMetrics.wind_direction" to Hint(unit = "deg"),
         "PowerMetrics.ch1_voltage" to Hint(unit = "V"),
-        "PowerMetrics.ch1_current" to Hint(unit = "mA"),
         "PowerMetrics.ch2_voltage" to Hint(unit = "V"),
-        "PowerMetrics.ch2_current" to Hint(unit = "mA"),
         "PowerMetrics.ch3_voltage" to Hint(unit = "V"),
-        "PowerMetrics.ch3_current" to Hint(unit = "mA"),
         "LocalStats.uptime_seconds" to Hint(unit = "s"),
         "LocalStats.channel_utilization" to Hint(unit = "%"),
         "LocalStats.air_util_tx" to Hint(unit = "%"),
         "HostMetrics.uptime_seconds" to Hint(unit = "s"),
         "Paxcount.uptime" to Hint(unit = "s"),
     )
+
+    /** Ключи таблицы — для теста, который сверяет её со схемой. */
+    internal val hintKeys: Set<String> get() = hints.keys
 
     companion object {
 

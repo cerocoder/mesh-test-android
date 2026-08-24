@@ -1,5 +1,6 @@
 package com.cerocoder.meshtest.frame
 
+import com.squareup.wire.WireField
 import java.time.ZoneId
 import okio.ByteString.Companion.decodeHex
 import org.junit.Assert.assertEquals
@@ -90,5 +91,33 @@ class FieldHintsTest {
     @Test
     fun `неизвестное поле печатается как есть`() {
         assertEquals("17", hints.format("Неведомое", "поле", 17))
+    }
+
+    @Test
+    fun `курс печатается градусами, а не сотыми долями`() {
+        // По схеме ground_track хранится в 1/100 градуса: 18000 — это 180.00°.
+        // Подпись "deg" без деления давала бы «18000 deg».
+        assertEquals("180.00 deg", hints.format("Position", "ground_track", 18_000))
+    }
+
+    @Test
+    fun `в таблице нет записей о несуществующих полях`() {
+        val missing = mutableListOf<String>()
+        for (key in FieldHints().hintKeys) {
+            val message = key.substringBefore('.')
+            val field = key.substringAfter('.')
+            val type = runCatching { Class.forName("org.meshtastic.proto.$message") }.getOrNull()
+            if (type == null) {
+                missing += "$key: нет такого сообщения"
+                continue
+            }
+            val exists = type.declaredFields.any { declared ->
+                val wire = declared.getAnnotation(WireField::class.java)
+                wire != null && wire.declaredName.ifEmpty { declared.name } == field
+            }
+            if (!exists) missing += "$key: нет такого поля"
+        }
+
+        assertEquals(emptyList<String>(), missing)
     }
 }
