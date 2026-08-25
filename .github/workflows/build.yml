@@ -99,3 +99,29 @@ jobs:
         with:
           name: app-release
           path: app/build/outputs/apk/release/*.apk
+
+      # Прогон по метке дополнительно выкладывает APK в раздел Releases.
+      # Делает это сам прогон, а не человек с машины: право записи в репозиторий
+      # есть у GITHUB_TOKEN этого workflow (permissions выше), а у токенов,
+      # которыми пользуются снаружи, его нет — и заводить такой токен ради
+      # нескольких релизов в год значит держать лишний ключ с правом записи.
+      #
+      # Артефакты прогона живут ограниченное время и требуют входа в GitHub,
+      # а файл в Releases доступен по прямой ссылке и не протухает — телефон
+      # можно обновить, не разбираясь в устройстве CI.
+      - name: Выложить APK в Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Имена файлов в сборке обезличены (app-release.apk), и в списке
+          # релизов их было бы не различить. Версия в имени решает это.
+          cp app/build/outputs/apk/release/app-release.apk "mesh-test-$TAG-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "mesh-test-$TAG-debug.apk"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "Сборка по метке $TAG. release — без демо-устройств, для работы с настоящей нодой; debug — с демо-устройствами, для отладки без ноды." \
+            "mesh-test-$TAG-release.apk" \
+            "mesh-test-$TAG-debug.apk"
